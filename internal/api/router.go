@@ -10,6 +10,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shirou/gopsutil/v3/process"
 	"github.com/xiaobei/singbox-manager/internal/builder"
 	"github.com/xiaobei/singbox-manager/internal/daemon"
 	"github.com/xiaobei/singbox-manager/internal/kernel"
@@ -668,16 +669,51 @@ func (s *Server) restartLaunchd(c *gin.Context) {
 
 // ==================== 监控 API ====================
 
+// ProcessStats 进程资源统计
+type ProcessStats struct {
+	PID        int     `json:"pid"`
+	CPUPercent float64 `json:"cpu_percent"`
+	MemoryMB   float64 `json:"memory_mb"`
+}
+
 func (s *Server) getSystemInfo(c *gin.Context) {
-	// TODO: 实现系统信息获取
-	c.JSON(http.StatusOK, gin.H{
-		"data": gin.H{
-			"hostname": "",
-			"platform": "darwin",
-			"cpu":      0,
-			"memory":   0,
-		},
-	})
+	result := gin.H{}
+
+	// 获取 sbm 进程信息
+	sbmPid := int32(os.Getpid())
+	if sbmProc, err := process.NewProcess(sbmPid); err == nil {
+		cpuPercent, _ := sbmProc.CPUPercent()
+		var memoryMB float64
+		if memInfo, err := sbmProc.MemoryInfo(); err == nil && memInfo != nil {
+			memoryMB = float64(memInfo.RSS) / 1024 / 1024
+		}
+
+		result["sbm"] = ProcessStats{
+			PID:        int(sbmPid),
+			CPUPercent: cpuPercent,
+			MemoryMB:   memoryMB,
+		}
+	}
+
+	// 获取 sing-box 进程信息
+	if s.processManager.IsRunning() {
+		singboxPid := int32(s.processManager.GetPID())
+		if singboxProc, err := process.NewProcess(singboxPid); err == nil {
+			cpuPercent, _ := singboxProc.CPUPercent()
+			var memoryMB float64
+			if memInfo, err := singboxProc.MemoryInfo(); err == nil && memInfo != nil {
+				memoryMB = float64(memInfo.RSS) / 1024 / 1024
+			}
+
+			result["singbox"] = ProcessStats{
+				PID:        int(singboxPid),
+				CPUPercent: cpuPercent,
+				MemoryMB:   memoryMB,
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 func (s *Server) getLogs(c *gin.Context) {

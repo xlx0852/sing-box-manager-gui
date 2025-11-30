@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { subscriptionApi, filterApi, ruleApi, ruleGroupApi, settingsApi, serviceApi, nodeApi, manualNodeApi } from '../api';
+import { subscriptionApi, filterApi, ruleApi, ruleGroupApi, settingsApi, serviceApi, nodeApi, manualNodeApi, monitorApi } from '../api';
 import { toast } from '../components/Toast';
 
 // 类型定义
@@ -104,6 +104,17 @@ export interface ServiceStatus {
   version: string;
 }
 
+export interface ProcessStats {
+  pid: number;
+  cpu_percent: number;
+  memory_mb: number;
+}
+
+export interface SystemInfo {
+  sbm?: ProcessStats;
+  singbox?: ProcessStats;
+}
+
 interface AppState {
   // 数据
   subscriptions: Subscription[];
@@ -114,6 +125,7 @@ interface AppState {
   ruleGroups: RuleGroup[];
   settings: Settings | null;
   serviceStatus: ServiceStatus | null;
+  systemInfo: SystemInfo | null;
 
   // 加载状态
   loading: boolean;
@@ -127,6 +139,7 @@ interface AppState {
   fetchRuleGroups: () => Promise<void>;
   fetchSettings: () => Promise<void>;
   fetchServiceStatus: () => Promise<void>;
+  fetchSystemInfo: () => Promise<void>;
 
   addSubscription: (name: string, url: string) => Promise<void>;
   updateSubscription: (id: string, name: string, url: string) => Promise<void>;
@@ -165,6 +178,7 @@ export const useStore = create<AppState>((set, get) => ({
   ruleGroups: [],
   settings: null,
   serviceStatus: null,
+  systemInfo: null,
   loading: false,
 
   fetchSubscriptions: async () => {
@@ -236,6 +250,15 @@ export const useStore = create<AppState>((set, get) => ({
       set({ serviceStatus: res.data.data });
     } catch (error) {
       console.error('获取服务状态失败:', error);
+    }
+  },
+
+  fetchSystemInfo: async () => {
+    try {
+      const res = await monitorApi.system();
+      set({ systemInfo: res.data.data });
+    } catch (error) {
+      console.error('获取系统信息失败:', error);
     }
   },
 

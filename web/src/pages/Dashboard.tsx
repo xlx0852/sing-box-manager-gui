@@ -1,18 +1,44 @@
-import { useEffect } from 'react';
-import { Card, CardBody, CardHeader, Button, Chip } from '@nextui-org/react';
-import { Play, Square, RefreshCw, Cpu, HardDrive, Wifi } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Card, CardBody, CardHeader, Button, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Tooltip } from '@nextui-org/react';
+import { Play, Square, RefreshCw, Cpu, HardDrive, Wifi, Info, Activity } from 'lucide-react';
 import { useStore } from '../store';
 import { serviceApi, configApi } from '../api';
+import { toast } from '../components/Toast';
 
 export default function Dashboard() {
-  const { serviceStatus, subscriptions, fetchServiceStatus, fetchSubscriptions } = useStore();
+  const { serviceStatus, subscriptions, systemInfo, fetchServiceStatus, fetchSubscriptions, fetchSystemInfo } = useStore();
+
+  // 错误模态框状态
+  const [errorModal, setErrorModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    title: '',
+    message: ''
+  });
+
+  // 显示错误的辅助函数
+  const showError = (title: string, error: any) => {
+    const message = error.response?.data?.error || error.message || '操作失败';
+    setErrorModal({
+      isOpen: true,
+      title,
+      message
+    });
+  };
 
   useEffect(() => {
     fetchServiceStatus();
     fetchSubscriptions();
+    fetchSystemInfo();
 
-    // 每 5 秒刷新状态
-    const interval = setInterval(fetchServiceStatus, 5000);
+    // 每 5 秒刷新状态和系统信息
+    const interval = setInterval(() => {
+      fetchServiceStatus();
+      fetchSystemInfo();
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -20,8 +46,9 @@ export default function Dashboard() {
     try {
       await serviceApi.start();
       await fetchServiceStatus();
+      toast.success('服务已启动');
     } catch (error) {
-      console.error('启动失败:', error);
+      showError('启动失败', error);
     }
   };
 
@@ -29,8 +56,9 @@ export default function Dashboard() {
     try {
       await serviceApi.stop();
       await fetchServiceStatus();
+      toast.success('服务已停止');
     } catch (error) {
-      console.error('停止失败:', error);
+      showError('停止失败', error);
     }
   };
 
@@ -38,8 +66,9 @@ export default function Dashboard() {
     try {
       await serviceApi.restart();
       await fetchServiceStatus();
+      toast.success('服务已重启');
     } catch (error) {
-      console.error('重启失败:', error);
+      showError('重启失败', error);
     }
   };
 
@@ -47,8 +76,9 @@ export default function Dashboard() {
     try {
       await configApi.apply();
       await fetchServiceStatus();
+      toast.success('配置已应用');
     } catch (error) {
-      console.error('应用配置失败:', error);
+      showError('应用配置失败', error);
     }
   };
 
@@ -117,7 +147,23 @@ export default function Dashboard() {
           <div className="grid grid-cols-3 gap-4">
             <div>
               <p className="text-sm text-gray-500">版本</p>
-              <p className="font-medium">{serviceStatus?.version || '-'}</p>
+              <div className="flex items-center gap-1">
+                <p className="font-medium">
+                  {serviceStatus?.version?.match(/version\s+([\d.]+)/)?.[1] || serviceStatus?.version || '-'}
+                </p>
+                {serviceStatus?.version && (
+                  <Tooltip
+                    content={
+                      <div className="max-w-xs whitespace-pre-wrap text-xs p-1">
+                        {serviceStatus.version}
+                      </div>
+                    }
+                    placement="bottom"
+                  >
+                    <Info className="w-3.5 h-3.5 text-gray-400 cursor-help" />
+                  </Tooltip>
+                )}
+              </div>
             </div>
             <div>
               <p className="text-sm text-gray-500">进程 ID</p>
@@ -134,7 +180,7 @@ export default function Dashboard() {
       </Card>
 
       {/* 统计卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardBody className="flex flex-row items-center gap-4">
             <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
@@ -165,8 +211,40 @@ export default function Dashboard() {
               <Cpu className="w-6 h-6 text-purple-600 dark:text-purple-300" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">系统状态</p>
-              <p className="text-2xl font-bold">正常</p>
+              <p className="text-sm text-gray-500">sbm 资源</p>
+              <p className="text-lg font-bold">
+                {systemInfo?.sbm ? (
+                  <>
+                    <span className="text-sm font-normal text-gray-500">CPU </span>
+                    {systemInfo.sbm.cpu_percent.toFixed(1)}%
+                    <span className="text-sm font-normal text-gray-500 ml-2">内存 </span>
+                    {systemInfo.sbm.memory_mb.toFixed(1)}MB
+                  </>
+                ) : '-'}
+              </p>
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardBody className="flex flex-row items-center gap-4">
+            <div className="p-3 bg-orange-100 dark:bg-orange-900 rounded-lg">
+              <Activity className="w-6 h-6 text-orange-600 dark:text-orange-300" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">sing-box 资源</p>
+              <p className="text-lg font-bold">
+                {serviceStatus?.running && systemInfo?.singbox ? (
+                  <>
+                    <span className="text-sm font-normal text-gray-500">CPU </span>
+                    {systemInfo.singbox.cpu_percent.toFixed(1)}%
+                    <span className="text-sm font-normal text-gray-500 ml-2">内存 </span>
+                    {systemInfo.singbox.memory_mb.toFixed(1)}MB
+                  </>
+                ) : (
+                  <span className="text-gray-400">未运行</span>
+                )}
+              </p>
             </div>
           </CardBody>
         </Card>
@@ -208,6 +286,21 @@ export default function Dashboard() {
           )}
         </CardBody>
       </Card>
+
+      {/* 错误提示模态框 */}
+      <Modal isOpen={errorModal.isOpen} onClose={() => setErrorModal({ ...errorModal, isOpen: false })}>
+        <ModalContent>
+          <ModalHeader className="text-danger">{errorModal.title}</ModalHeader>
+          <ModalBody>
+            <p className="whitespace-pre-wrap text-sm">{errorModal.message}</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button color="primary" onPress={() => setErrorModal({ ...errorModal, isOpen: false })}>
+              确定
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

@@ -1,18 +1,53 @@
-import { useEffect, useState } from 'react';
-import { Card, CardBody, CardHeader, Input, Button, Switch, Chip } from '@nextui-org/react';
-import { Save, Download, Upload, Terminal } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { Card, CardBody, CardHeader, Input, Button, Switch, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Progress } from '@nextui-org/react';
+import { Save, Download, Upload, Terminal, CheckCircle, AlertCircle } from 'lucide-react';
 import { useStore } from '../store';
 import type { Settings as SettingsType } from '../store';
-import { launchdApi } from '../api';
+import { launchdApi, kernelApi } from '../api';
+import { toast } from '../components/Toast';
+
+// 内核信息类型
+interface KernelInfo {
+  installed: boolean;
+  version: string;
+  path: string;
+  os: string;
+  arch: string;
+}
+
+// 下载进度类型
+interface DownloadProgress {
+  status: 'idle' | 'preparing' | 'downloading' | 'extracting' | 'installing' | 'completed' | 'error';
+  progress: number;
+  message: string;
+  downloaded?: number;
+  total?: number;
+}
+
+// GitHub Release 类型
+interface GithubRelease {
+  tag_name: string;
+  name: string;
+}
 
 export default function Settings() {
   const { settings, fetchSettings, updateSettings } = useStore();
   const [formData, setFormData] = useState<SettingsType | null>(null);
   const [launchdStatus, setLaunchdStatus] = useState<{ installed: boolean; running: boolean } | null>(null);
 
+  // 内核相关状态
+  const [kernelInfo, setKernelInfo] = useState<KernelInfo | null>(null);
+  const [releases, setReleases] = useState<GithubRelease[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<string>('');
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     fetchSettings();
     fetchLaunchdStatus();
+    fetchKernelInfo();
   }, []);
 
   useEffect(() => {
@@ -20,6 +55,24 @@ export default function Settings() {
       setFormData(settings);
     }
   }, [settings]);
+
+  // 清理轮询定时器
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const fetchKernelInfo = async () => {
+    try {
+      const res = await kernelApi.getInfo();
+      setKernelInfo(res.data.data);
+    } catch (error) {
+      console.error('获取内核信息失败:', error);
+    }
+  };
 
   const fetchLaunchdStatus = async () => {
     try {
@@ -30,29 +83,116 @@ export default function Settings() {
     }
   };
 
+  const fetchReleases = async () => {
+    try {
+      const res = await kernelApi.getReleases();
+      setReleases(res.data.data || []);
+      if (res.data.data && res.data.data.length > 0) {
+        setSelectedVersion(res.data.data[0].tag_name);
+      }
+    } catch (error) {
+      console.error('获取版本列表失败:', error);
+    }
+  };
+
   const handleSave = async () => {
     if (formData) {
-      await updateSettings(formData);
+      try {
+        await updateSettings(formData);
+        toast.success('设置已保存');
+      } catch (error: any) {
+        toast.error(error.response?.data?.error || '保存设置失败');
+      }
     }
   };
 
   const handleInstallLaunchd = async () => {
     try {
-      await launchdApi.install();
+      const res = await launchdApi.install();
+      const data = res.data;
+      if (data.action === 'exit') {
+        toast.success(data.message);
+      } else if (data.action === 'manual') {
+        toast.info(data.message);
+      } else {
+        toast.success(data.message || '服务已安装');
+      }
       await fetchLaunchdStatus();
-    } catch (error) {
+    } catch (error: any) {
       console.error('安装 launchd 服务失败:', error);
+      toast.error(error.response?.data?.error || '安装服务失败');
     }
   };
 
   const handleUninstallLaunchd = async () => {
-    if (confirm('确定要卸载 launchd 服务吗？')) {
+    if (confirm('确定要卸载 launchd 服务吗？卸载后 sbm 将不再开机自启。')) {
       try {
         await launchdApi.uninstall();
+        toast.success('服务已卸载');
         await fetchLaunchdStatus();
-      } catch (error) {
+      } catch (error: any) {
         console.error('卸载 launchd 服务失败:', error);
+        toast.error(error.response?.data?.error || '卸载服务失败');
       }
+    }
+  };
+
+  const handleRestartLaunchd = async () => {
+    try {
+      await launchdApi.restart();
+      toast.success('服务已重启');
+      await fetchLaunchdStatus();
+    } catch (error: any) {
+      console.error('重启 launchd 服务失败:', error);
+      toast.error(error.response?.data?.error || '重启服务失败');
+    }
+  };
+
+  const openDownloadModal = async () => {
+    await fetchReleases();
+    setDownloadProgress(null);
+    setShowDownloadModal(true);
+  };
+
+  const startDownload = async () => {
+    if (!selectedVersion) return;
+
+    setDownloading(true);
+    setDownloadProgress({ status: 'preparing', progress: 0, message: '正在准备下载...' });
+
+    try {
+      await kernelApi.download(selectedVersion);
+
+      // 开始轮询进度
+      pollIntervalRef.current = setInterval(async () => {
+        try {
+          const res = await kernelApi.getProgress();
+          const progress = res.data.data;
+          setDownloadProgress(progress);
+
+          if (progress.status === 'completed' || progress.status === 'error') {
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+            setDownloading(false);
+
+            if (progress.status === 'completed') {
+              await fetchKernelInfo();
+              setTimeout(() => setShowDownloadModal(false), 1500);
+            }
+          }
+        } catch (error) {
+          console.error('获取进度失败:', error);
+        }
+      }, 500);
+    } catch (error: any) {
+      setDownloading(false);
+      setDownloadProgress({
+        status: 'error',
+        progress: 0,
+        message: error.response?.data?.error || '下载失败',
+      });
     }
   };
 
@@ -80,17 +220,53 @@ export default function Settings() {
           <h2 className="text-lg font-semibold">sing-box 配置</h2>
         </CardHeader>
         <CardBody className="space-y-4">
-          <Input
-            label="sing-box 路径"
-            placeholder="/usr/local/bin/sing-box"
-            value={formData.singbox_path}
-            onChange={(e) => setFormData({ ...formData, singbox_path: e.target.value })}
-          />
+          {/* 内核状态 */}
+          <div className="flex items-center justify-between p-4 rounded-lg bg-default-100">
+            <div className="flex items-center gap-3">
+              {kernelInfo?.installed ? (
+                <>
+                  <CheckCircle className="w-5 h-5 text-success" />
+                  <div>
+                    <p className="font-medium">sing-box 已安装</p>
+                    <p className="text-sm text-gray-500">
+                      版本: {kernelInfo.version || '未知'} | 平台: {kernelInfo.os}/{kernelInfo.arch}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="w-5 h-5 text-warning" />
+                  <div>
+                    <p className="font-medium text-warning">sing-box 未安装</p>
+                    <p className="text-sm text-gray-500">
+                      需要下载 sing-box 内核才能使用代理功能
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+            <Button
+              color={kernelInfo?.installed ? 'default' : 'primary'}
+              variant={kernelInfo?.installed ? 'flat' : 'solid'}
+              startContent={<Download className="w-4 h-4" />}
+              onPress={openDownloadModal}
+            >
+              {kernelInfo?.installed ? '更新内核' : '下载内核'}
+            </Button>
+          </div>
+
           <Input
             label="配置文件路径"
             placeholder="data/generated/config.json"
             value={formData.config_path}
             onChange={(e) => setFormData({ ...formData, config_path: e.target.value })}
+          />
+          <Input
+            label="GitHub 代理地址"
+            placeholder="如 https://ghproxy.com/"
+            description="用于加速 GitHub 下载，留空则直连"
+            value={formData.github_proxy || ''}
+            onChange={(e) => setFormData({ ...formData, github_proxy: e.target.value })}
           />
         </CardBody>
       </Card>
@@ -203,7 +379,7 @@ export default function Settings() {
       {/* launchd 服务管理 */}
       <Card>
         <CardHeader className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold">系统服务 (launchd)</h2>
+          <h2 className="text-lg font-semibold">后台服务 (launchd)</h2>
           {launchdStatus && (
             <Chip
               color={launchdStatus.installed ? 'success' : 'default'}
@@ -216,28 +392,98 @@ export default function Settings() {
         </CardHeader>
         <CardBody>
           <p className="text-sm text-gray-500 mb-4">
-            安装 launchd 服务后，sing-box 将在系统启动时自动运行，并在崩溃后自动重启。
+            安装后台服务可让 sbm 管理程序在后台运行，关闭终端后仍可访问 Web 管理界面。服务会开机自启并在崩溃后自动重启。
           </p>
           <div className="flex gap-2">
             {launchdStatus?.installed ? (
-              <Button
-                color="danger"
-                variant="flat"
-                onPress={handleUninstallLaunchd}
-              >
-                卸载服务
-              </Button>
+              <>
+                <Button
+                  color="primary"
+                  variant="flat"
+                  onPress={handleRestartLaunchd}
+                >
+                  重启服务
+                </Button>
+                <Button
+                  color="danger"
+                  variant="flat"
+                  onPress={handleUninstallLaunchd}
+                >
+                  卸载服务
+                </Button>
+              </>
             ) : (
               <Button
                 color="primary"
                 onPress={handleInstallLaunchd}
               >
-                安装服务
+                安装后台服务
               </Button>
             )}
           </div>
         </CardBody>
       </Card>
+
+      {/* 下载内核弹窗 */}
+      <Modal isOpen={showDownloadModal} onClose={() => !downloading && setShowDownloadModal(false)}>
+        <ModalContent>
+          <ModalHeader>下载 sing-box 内核</ModalHeader>
+          <ModalBody>
+            <Select
+              label="选择版本"
+              placeholder="选择要下载的版本"
+              selectedKeys={selectedVersion ? [selectedVersion] : []}
+              onSelectionChange={(keys) => {
+                const selected = Array.from(keys)[0] as string;
+                if (selected) setSelectedVersion(selected);
+              }}
+              isDisabled={downloading}
+            >
+              {releases.map((release) => (
+                <SelectItem key={release.tag_name} textValue={release.tag_name}>
+                  {release.tag_name} {release.name && `- ${release.name}`}
+                </SelectItem>
+              ))}
+            </Select>
+
+            {kernelInfo && (
+              <p className="text-sm text-gray-500">
+                将下载适用于 {kernelInfo.os}/{kernelInfo.arch} 的版本
+              </p>
+            )}
+
+            {downloadProgress && (
+              <div className="mt-4 space-y-2">
+                <Progress
+                  value={downloadProgress.progress}
+                  color={downloadProgress.status === 'error' ? 'danger' : downloadProgress.status === 'completed' ? 'success' : 'primary'}
+                  showValueLabel
+                />
+                <p className={`text-sm ${downloadProgress.status === 'error' ? 'text-danger' : downloadProgress.status === 'completed' ? 'text-success' : 'text-gray-600'}`}>
+                  {downloadProgress.message}
+                </p>
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              variant="flat"
+              onPress={() => setShowDownloadModal(false)}
+              isDisabled={downloading}
+            >
+              取消
+            </Button>
+            <Button
+              color="primary"
+              onPress={startDownload}
+              isLoading={downloading}
+              isDisabled={!selectedVersion || downloading}
+            >
+              开始下载
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

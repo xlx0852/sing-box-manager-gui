@@ -64,12 +64,15 @@ export const launchdApi = {
   status: () => api.get('/launchd/status'),
   install: () => api.post('/launchd/install'),
   uninstall: () => api.post('/launchd/uninstall'),
+  restart: () => api.post('/launchd/restart'),
 };
 
 // 监控 API
 export const monitorApi = {
   system: () => api.get('/monitor/system'),
   logs: () => api.get('/monitor/logs'),
+  appLogs: (lines: number = 200) => api.get(`/monitor/logs/sbm?lines=${lines}`),
+  singboxLogs: (lines: number = 200) => api.get(`/monitor/logs/singbox?lines=${lines}`),
 };
 
 // 节点 API
@@ -86,6 +89,14 @@ export const manualNodeApi = {
   add: (data: any) => api.post('/manual-nodes', data),
   update: (id: string, data: any) => api.put(`/manual-nodes/${id}`, data),
   delete: (id: string) => api.delete(`/manual-nodes/${id}`),
+};
+
+// 内核管理 API
+export const kernelApi = {
+  getInfo: () => api.get('/kernel/info'),
+  getReleases: () => api.get('/kernel/releases'),
+  download: (version: string) => api.post('/kernel/download', { version }),
+  getProgress: () => api.get('/kernel/progress'),
 };
 
 export default api;

@@ -78,12 +78,19 @@ type Inbound struct {
 // Outbound 出站配置
 type Outbound map[string]interface{}
 
+// DomainResolver 域名解析器配置
+type DomainResolver struct {
+	Server     string `json:"server"`
+	RewriteTTL int    `json:"rewrite_ttl,omitempty"`
+}
+
 // RouteConfig 路由配置
 type RouteConfig struct {
-	Rules               []RouteRule `json:"rules,omitempty"`
-	RuleSet             []RuleSet   `json:"rule_set,omitempty"`
-	Final               string      `json:"final,omitempty"`
-	AutoDetectInterface bool        `json:"auto_detect_interface,omitempty"`
+	Rules                 []RouteRule     `json:"rules,omitempty"`
+	RuleSet               []RuleSet       `json:"rule_set,omitempty"`
+	Final                 string          `json:"final,omitempty"`
+	AutoDetectInterface   bool            `json:"auto_detect_interface,omitempty"`
+	DefaultDomainResolver *DomainResolver `json:"default_domain_resolver,omitempty"`
 }
 
 // RouteRule 路由规则
@@ -206,12 +213,7 @@ func (b *ConfigBuilder) buildDNS() *DNSConfig {
 			},
 		},
 		Rules: []DNSRule{
-			{
-				// 关键规则：代理服务器地址解析走直连，避免 DNS 循环
-				Outbound: "any",
-				Server:   "dns_direct",
-				Action:   "route",
-			},
+			// 注意：outbound: "any" 规则已移除，改用 route.default_domain_resolver
 			{
 				RuleSet: []string{"geosite-category-ads-all"},
 				Action:  "reject",
@@ -506,6 +508,11 @@ func (b *ConfigBuilder) buildRoute() *RouteConfig {
 	route := &RouteConfig{
 		AutoDetectInterface: true,
 		Final:               "Final",
+		// 默认域名解析器：用于解析所有 outbound 的服务器地址，避免 DNS 循环
+		DefaultDomainResolver: &DomainResolver{
+			Server:     "dns_direct",
+			RewriteTTL: 60,
+		},
 	}
 
 	// 构建规则集

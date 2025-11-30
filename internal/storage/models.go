@@ -117,14 +117,17 @@ type Settings struct {
 	RuleSetBaseURL string `json:"ruleset_base_url"` // 规则集下载地址
 
 	// 自动化设置
-	AutoApply            bool `json:"auto_apply"`             // 配置变更后自动应用
-	SubscriptionInterval int  `json:"subscription_interval"`  // 订阅自动更新间隔 (分钟)，0 表示禁用
+	AutoApply            bool `json:"auto_apply"`            // 配置变更后自动应用
+	SubscriptionInterval int  `json:"subscription_interval"` // 订阅自动更新间隔 (分钟)，0 表示禁用
+
+	// GitHub 代理设置
+	GithubProxy string `json:"github_proxy"` // GitHub 代理地址，如 https://ghproxy.com/
 }
 
 // DefaultSettings 默认设置
 func DefaultSettings() *Settings {
 	return &Settings{
-		SingBoxPath:          "/usr/local/bin/sing-box",
+		SingBoxPath:          "data/bin/sing-box",
 		ConfigPath:           "data/generated/config.json",
 		MixedPort:            2080,
 		TunEnabled:           true,
@@ -135,8 +138,9 @@ func DefaultSettings() *Settings {
 		ClashUIPath:          "zashboard",
 		FinalOutbound:        "Proxy",
 		RuleSetBaseURL:       "https://github.com/lyc8503/sing-box-rules/raw/rule-set-geosite",
-		AutoApply:            true,  // 默认开启自动应用
-		SubscriptionInterval: 60,    // 默认 60 分钟更新一次
+		AutoApply:            true, // 默认开启自动应用
+		SubscriptionInterval: 60,   // 默认 60 分钟更新一次
+		GithubProxy:          "",   // 默认不使用代理
 	}
 }
 

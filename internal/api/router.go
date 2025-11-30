@@ -1,8 +1,10 @@
 package api
 
 import (
+	"io/fs"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -10,9 +12,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/xiaobei/singbox-manager/internal/builder"
 	"github.com/xiaobei/singbox-manager/internal/daemon"
+	"github.com/xiaobei/singbox-manager/internal/kernel"
+	"github.com/xiaobei/singbox-manager/internal/logger"
 	"github.com/xiaobei/singbox-manager/internal/parser"
 	"github.com/xiaobei/singbox-manager/internal/service"
 	"github.com/xiaobei/singbox-manager/internal/storage"
+	"github.com/xiaobei/singbox-manager/web"
 )
 
 // Server API 服务器
@@ -21,23 +26,32 @@ type Server struct {
 	subService     *service.SubscriptionService
 	processManager *daemon.ProcessManager
 	launchdManager *daemon.LaunchdManager
+	kernelManager  *kernel.Manager
 	scheduler      *service.Scheduler
 	router         *gin.Engine
+	sbmPath        string // sbm 可执行文件路径
+	port           int    // Web 服务端口
 }
 
 // NewServer 创建 API 服务器
-func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, launchdManager *daemon.LaunchdManager) *Server {
+func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, launchdManager *daemon.LaunchdManager, sbmPath string, port int) *Server {
 	gin.SetMode(gin.ReleaseMode)
 
 	subService := service.NewSubscriptionService(store)
+
+	// 创建内核管理器
+	kernelManager := kernel.NewManager(store.GetDataDir(), store.GetSettings)
 
 	s := &Server{
 		store:          store,
 		subService:     subService,
 		processManager: processManager,
 		launchdManager: launchdManager,
+		kernelManager:  kernelManager,
 		scheduler:      service.NewScheduler(store, subService),
 		router:         gin.Default(),
+		sbmPath:        sbmPath,
+		port:           port,
 	}
 
 	// 设置调度器的更新回调
@@ -116,10 +130,13 @@ func (s *Server) setupRoutes() {
 		api.GET("/launchd/status", s.getLaunchdStatus)
 		api.POST("/launchd/install", s.installLaunchd)
 		api.POST("/launchd/uninstall", s.uninstallLaunchd)
+		api.POST("/launchd/restart", s.restartLaunchd)
 
 		// 系统监控
 		api.GET("/monitor/system", s.getSystemInfo)
 		api.GET("/monitor/logs", s.getLogs)
+		api.GET("/monitor/logs/sbm", s.getAppLogs)
+		api.GET("/monitor/logs/singbox", s.getSingboxLogs)
 
 		// 节点
 		api.GET("/nodes", s.getAllNodes)
@@ -132,14 +149,32 @@ func (s *Server) setupRoutes() {
 		api.POST("/manual-nodes", s.addManualNode)
 		api.PUT("/manual-nodes/:id", s.updateManualNode)
 		api.DELETE("/manual-nodes/:id", s.deleteManualNode)
+
+		// 内核管理
+		api.GET("/kernel/info", s.getKernelInfo)
+		api.GET("/kernel/releases", s.getKernelReleases)
+		api.POST("/kernel/download", s.startKernelDownload)
+		api.GET("/kernel/progress", s.getKernelProgress)
 	}
 
-	// 静态文件服务（前端）
-	s.router.Static("/assets", "./web/dist/assets")
-	s.router.StaticFile("/", "./web/dist/index.html")
-	s.router.NoRoute(func(c *gin.Context) {
-		c.File("./web/dist/index.html")
-	})
+	// 静态文件服务（前端，使用嵌入的文件系统）
+	distFS, err := web.GetDistFS()
+	if err != nil {
+		logger.Printf("加载前端资源失败: %v", err)
+	} else {
+		// 获取 assets 子目录
+		assetsFS, _ := fs.Sub(distFS, "assets")
+		s.router.StaticFS("/assets", http.FS(assetsFS))
+
+		// 处理根路径和所有未匹配的路由（SPA 支持）
+		indexHTML, _ := fs.ReadFile(distFS, "index.html")
+		s.router.GET("/", func(c *gin.Context) {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
+		})
+		s.router.NoRoute(func(c *gin.Context) {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
+		})
+	}
 }
 
 // Run 运行服务器
@@ -248,6 +283,9 @@ func (s *Server) addFilter(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 生成 ID
+	filter.ID = uuid.New().String()
 
 	if err := s.store.AddFilter(filter); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -408,8 +446,8 @@ func (s *Server) updateSettings(c *gin.Context) {
 		return
 	}
 
-	// 更新进程管理器的路径
-	s.processManager.SetPaths(settings.SingBoxPath, settings.ConfigPath)
+	// 更新进程管理器的配置路径（sing-box 路径是固定的，无需更新）
+	s.processManager.SetConfigPath(settings.ConfigPath)
 
 	// 重启调度器（可能更新了定时间隔）
 	s.scheduler.Restart()
@@ -579,15 +617,17 @@ func (s *Server) getLaunchdStatus(c *gin.Context) {
 }
 
 func (s *Server) installLaunchd(c *gin.Context) {
-	settings := s.store.GetSettings()
+	// 确保日志目录存在
+	logsDir := s.store.GetDataDir() + "/logs"
 
 	config := daemon.LaunchdConfig{
-		SingBoxPath: settings.SingBoxPath,
-		ConfigPath:  settings.ConfigPath,
-		LogPath:     s.store.GetDataDir(),
-		WorkingDir:  s.store.GetDataDir(),
-		RunAtLoad:   true,
-		KeepAlive:   true,
+		SbmPath:    s.sbmPath,
+		DataDir:    s.store.GetDataDir(),
+		Port:       strconv.Itoa(s.port),
+		LogPath:    logsDir,
+		WorkingDir: s.store.GetDataDir(),
+		RunAtLoad:  true,
+		KeepAlive:  true,
 	}
 
 	if err := s.launchdManager.Install(config); err != nil {
@@ -595,7 +635,19 @@ func (s *Server) installLaunchd(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "服务已安装"})
+	// 安装成功后启动服务
+	if err := s.launchdManager.Start(); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "服务已安装，但启动失败: " + err.Error() + "。请重启电脑或手动执行 launchctl load 命令",
+			"action":  "manual",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "服务已安装并启动，您可以关闭此终端窗口。sbm 将在后台运行并开机自启。",
+		"action":  "exit",
+	})
 }
 
 func (s *Server) uninstallLaunchd(c *gin.Context) {
@@ -604,6 +656,14 @@ func (s *Server) uninstallLaunchd(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "服务已卸载"})
+}
+
+func (s *Server) restartLaunchd(c *gin.Context) {
+	if err := s.launchdManager.Restart(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "服务已重启"})
 }
 
 // ==================== 监控 API ====================
@@ -622,6 +682,40 @@ func (s *Server) getSystemInfo(c *gin.Context) {
 
 func (s *Server) getLogs(c *gin.Context) {
 	logs := s.processManager.GetLogs()
+	c.JSON(http.StatusOK, gin.H{"data": logs})
+}
+
+// getAppLogs 获取应用日志
+func (s *Server) getAppLogs(c *gin.Context) {
+	lines := 200 // 默认返回 200 行
+	if linesParam := c.Query("lines"); linesParam != "" {
+		if n, err := strconv.Atoi(linesParam); err == nil && n > 0 {
+			lines = n
+		}
+	}
+
+	logs, err := logger.ReadAppLogs(lines)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": logs})
+}
+
+// getSingboxLogs 获取 sing-box 日志
+func (s *Server) getSingboxLogs(c *gin.Context) {
+	lines := 200 // 默认返回 200 行
+	if linesParam := c.Query("lines"); linesParam != "" {
+		if n, err := strconv.Atoi(linesParam); err == nil && n > 0 {
+			lines = n
+		}
+	}
+
+	logs, err := logger.ReadSingboxLogs(lines)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": logs})
 }
 
@@ -732,4 +826,58 @@ func (s *Server) deleteManualNode(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+}
+
+// ==================== 内核管理 API ====================
+
+func (s *Server) getKernelInfo(c *gin.Context) {
+	info := s.kernelManager.GetInfo()
+	c.JSON(http.StatusOK, gin.H{"data": info})
+}
+
+func (s *Server) getKernelReleases(c *gin.Context) {
+	releases, err := s.kernelManager.FetchReleases()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 只返回版本号和名称，不返回完整的 assets
+	type ReleaseInfo struct {
+		TagName string `json:"tag_name"`
+		Name    string `json:"name"`
+	}
+
+	result := make([]ReleaseInfo, len(releases))
+	for i, r := range releases {
+		result[i] = ReleaseInfo{
+			TagName: r.TagName,
+			Name:    r.Name,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (s *Server) startKernelDownload(c *gin.Context) {
+	var req struct {
+		Version string `json:"version" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.kernelManager.StartDownload(req.Version); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "下载已开始"})
+}
+
+func (s *Server) getKernelProgress(c *gin.Context) {
+	progress := s.kernelManager.GetProgress()
+	c.JSON(http.StatusOK, gin.H{"data": progress})
 }

@@ -17,19 +17,20 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>{{.Label}}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{{.SingBoxPath}}</string>
-        <string>run</string>
-        <string>-c</string>
-        <string>{{.ConfigPath}}</string>
+        <string>{{.SbmPath}}</string>
+        <string>-data</string>
+        <string>{{.DataDir}}</string>
+        <string>-port</string>
+        <string>{{.Port}}</string>
     </array>
     <key>RunAtLoad</key>
     <{{if .RunAtLoad}}true{{else}}false{{end}}/>
     <key>KeepAlive</key>
     <{{if .KeepAlive}}true{{else}}false{{end}}/>
     <key>StandardOutPath</key>
-    <string>{{.LogPath}}/singbox.log</string>
+    <string>{{.LogPath}}/sbm.log</string>
     <key>StandardErrorPath</key>
-    <string>{{.LogPath}}/singbox.error.log</string>
+    <string>{{.LogPath}}/sbm.error.log</string>
     <key>WorkingDirectory</key>
     <string>{{.WorkingDir}}</string>
 </dict>
@@ -37,13 +38,14 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 
 // LaunchdConfig launchd 配置
 type LaunchdConfig struct {
-	Label       string
-	SingBoxPath string
-	ConfigPath  string
-	LogPath     string
-	WorkingDir  string
-	RunAtLoad   bool
-	KeepAlive   bool
+	Label      string
+	SbmPath    string // sbm 可执行文件路径
+	DataDir    string // 数据目录
+	Port       string // Web 端口
+	LogPath    string
+	WorkingDir string
+	RunAtLoad  bool
+	KeepAlive  bool
 }
 
 // LaunchdManager launchd 管理器

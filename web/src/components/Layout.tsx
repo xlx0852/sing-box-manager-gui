@@ -1,10 +1,13 @@
+import { useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Globe, FileText, Settings, Activity } from 'lucide-react';
+import { LayoutDashboard, Globe, FileText, Settings, Activity, ScrollText } from 'lucide-react';
+import { useStore } from '../store';
 
 const menuItems = [
   { path: '/', icon: LayoutDashboard, label: '仪表盘' },
   { path: '/subscriptions', icon: Globe, label: '节点' },
   { path: '/rules', icon: FileText, label: '规则' },
+  { path: '/logs', icon: ScrollText, label: '日志' },
   { path: '/settings', icon: Settings, label: '设置' },
 ];
 
@@ -14,6 +17,15 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
+  const { settings, fetchSettings } = useStore();
+
+  useEffect(() => {
+    if (!settings) {
+      fetchSettings();
+    }
+  }, []);
+
+  const clashApiPort = settings?.clash_api_port || 9091;
 
   return (
     <div className="flex min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -51,7 +63,7 @@ export default function Layout({ children }: LayoutProps) {
         {/* 底部链接 */}
         <div className="sticky bottom-4 left-4 right-4 mt-auto pt-4">
           <a
-            href="/ui/"
+            href={`http://127.0.0.1:${clashApiPort}/ui/`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 px-4 py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-primary transition-colors"

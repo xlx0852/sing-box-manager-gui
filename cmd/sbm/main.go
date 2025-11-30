@@ -3,12 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/xiaobei/singbox-manager/internal/api"
 	"github.com/xiaobei/singbox-manager/internal/daemon"
+	"github.com/xiaobei/singbox-manager/internal/logger"
 	"github.com/xiaobei/singbox-manager/internal/storage"
 )
 
@@ -30,41 +30,64 @@ func init() {
 func main() {
 	flag.Parse()
 
+	// 将 dataDir 转换为绝对路径，避免相对路径在子进程中出错
+	var err error
+	dataDir, err = filepath.Abs(dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "获取绝对路径失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 获取当前可执行文件的绝对路径（用于 launchd 安装）
+	execPath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "获取可执行文件路径失败: %v\n", err)
+		os.Exit(1)
+	}
+	execPath, _ = filepath.EvalSymlinks(execPath)
+
+	// 初始化日志系统
+	if err := logger.InitLogManager(dataDir); err != nil {
+		fmt.Fprintf(os.Stderr, "初始化日志系统失败: %v\n", err)
+		os.Exit(1)
+	}
+
 	// 打印启动信息
-	fmt.Printf("singbox-manager v%s\n", version)
-	fmt.Printf("数据目录: %s\n", dataDir)
-	fmt.Printf("Web 端口: %d\n", port)
+	logger.Printf("singbox-manager v%s", version)
+	logger.Printf("数据目录: %s", dataDir)
+	logger.Printf("Web 端口: %d", port)
 
 	// 初始化存储
 	store, err := storage.NewJSONStore(dataDir)
 	if err != nil {
-		log.Fatalf("初始化存储失败: %v", err)
+		logger.Printf("初始化存储失败: %v", err)
+		os.Exit(1)
 	}
 
-	// 获取设置
-	settings := store.GetSettings()
-
 	// 初始化进程管理器
+	// sing-box 二进制文件路径固定为 dataDir/bin/sing-box
+	singboxPath := filepath.Join(dataDir, "bin", "sing-box")
 	configPath := filepath.Join(dataDir, "generated", "config.json")
-	processManager := daemon.NewProcessManager(settings.SingBoxPath, configPath)
+	processManager := daemon.NewProcessManager(singboxPath, configPath, dataDir)
 
 	// 初始化 launchd 管理器
 	launchdManager, err := daemon.NewLaunchdManager()
 	if err != nil {
-		log.Printf("初始化 launchd 管理器失败: %v", err)
+		logger.Printf("初始化 launchd 管理器失败: %v", err)
 	}
 
 	// 创建 API 服务器
-	server := api.NewServer(store, processManager, launchdManager)
+	server := api.NewServer(store, processManager, launchdManager, execPath, port)
 
 	// 启动定时任务调度器
 	server.StartScheduler()
 
 	// 启动服务
 	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("启动 Web 服务: http://127.0.0.1%s\n", addr)
+	logger.Printf("启动 Web 服务: http://0.0.0.0%s", addr)
 
 	if err := server.Run(addr); err != nil {
-		log.Fatalf("启动服务失败: %v", err)
+		logger.Printf("启动服务失败: %v", err)
+		os.Exit(1)
 	}
 }

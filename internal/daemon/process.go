@@ -7,12 +7,15 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+
+	"github.com/xiaobei/singbox-manager/internal/logger"
 )
 
 // ProcessManager 进程管理器
 type ProcessManager struct {
 	singboxPath string
 	configPath  string
+	dataDir     string // 数据目录，用于设置 sing-box 的工作目录
 	cmd         *exec.Cmd
 	mu          sync.RWMutex
 	running     bool
@@ -21,10 +24,11 @@ type ProcessManager struct {
 }
 
 // NewProcessManager 创建进程管理器
-func NewProcessManager(singboxPath, configPath string) *ProcessManager {
+func NewProcessManager(singboxPath, configPath, dataDir string) *ProcessManager {
 	return &ProcessManager{
 		singboxPath: singboxPath,
 		configPath:  configPath,
+		dataDir:     dataDir,
 		maxLogs:     1000,
 		logs:        make([]string, 0),
 	}
@@ -50,6 +54,7 @@ func (pm *ProcessManager) Start() error {
 	}
 
 	pm.cmd = exec.Command(pm.singboxPath, "run", "-c", pm.configPath)
+	pm.cmd.Dir = pm.dataDir // 设置工作目录，确保相对路径（如 external_ui）正确解析
 
 	// 捕获输出
 	stdout, err := pm.cmd.StdoutPipe()
@@ -67,19 +72,36 @@ func (pm *ProcessManager) Start() error {
 	}
 
 	pm.running = true
+	logger.Printf("sing-box 已启动, PID: %d", pm.cmd.Process.Pid)
+
+	// 获取 sing-box 日志记录器
+	var singboxLogger *logger.Logger
+	if logManager := logger.GetLogManager(); logManager != nil {
+		singboxLogger = logManager.SingboxLogger()
+	}
 
 	// 异步读取日志
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			pm.addLog(scanner.Text())
+			line := scanner.Text()
+			pm.addLog(line)
+			// 同时写入日志文件
+			if singboxLogger != nil {
+				singboxLogger.WriteRaw(line)
+			}
 		}
 	}()
 
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
-			pm.addLog(scanner.Text())
+			line := scanner.Text()
+			pm.addLog(line)
+			// 同时写入日志文件
+			if singboxLogger != nil {
+				singboxLogger.WriteRaw(line)
+			}
 		}
 	}()
 
@@ -103,6 +125,8 @@ func (pm *ProcessManager) Stop() error {
 		return nil
 	}
 
+	pid := pm.cmd.Process.Pid
+
 	// 发送 SIGTERM 信号
 	if err := pm.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		// 如果 SIGTERM 失败，尝试 SIGKILL
@@ -112,6 +136,7 @@ func (pm *ProcessManager) Stop() error {
 	}
 
 	pm.running = false
+	logger.Printf("sing-box 已停止, PID: %d", pid)
 	return nil
 }
 
@@ -193,6 +218,13 @@ func (pm *ProcessManager) SetPaths(singboxPath, configPath string) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.singboxPath = singboxPath
+	pm.configPath = configPath
+}
+
+// SetConfigPath 只设置配置文件路径
+func (pm *ProcessManager) SetConfigPath(configPath string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.configPath = configPath
 }
 

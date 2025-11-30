@@ -21,7 +21,7 @@ import {
   SelectItem,
   Switch,
 } from '@nextui-org/react';
-import { Plus, RefreshCw, Trash2, Globe, Server, Pencil, Link, Filter as FilterIcon } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, Globe, Server, Pencil, Link, Filter as FilterIcon, ChevronDown, ChevronUp } from 'lucide-react';
 import { useStore } from '../store';
 import { nodeApi } from '../api';
 import type { Subscription, ManualNode, Node, Filter } from '../store';
@@ -81,6 +81,7 @@ export default function Subscriptions() {
     fetchCountryGroups,
     fetchFilters,
     addSubscription,
+    updateSubscription,
     deleteSubscription,
     refreshSubscription,
     addManualNode,
@@ -98,6 +99,7 @@ export default function Subscriptions() {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null);
 
   // 手动节点表单
   const [editingNode, setEditingNode] = useState<ManualNode | null>(null);
@@ -134,17 +136,36 @@ export default function Subscriptions() {
     fetchFilters();
   }, []);
 
-  const handleAddSubscription = async () => {
+  const handleOpenAddSubscription = () => {
+    setEditingSubscription(null);
+    setName('');
+    setUrl('');
+    onSubOpen();
+  };
+
+  const handleOpenEditSubscription = (sub: Subscription) => {
+    setEditingSubscription(sub);
+    setName(sub.name);
+    setUrl(sub.url);
+    onSubOpen();
+  };
+
+  const handleSaveSubscription = async () => {
     if (!name || !url) return;
 
     setIsSubmitting(true);
     try {
-      await addSubscription(name, url);
+      if (editingSubscription) {
+        await updateSubscription(editingSubscription.id, name, url);
+      } else {
+        await addSubscription(name, url);
+      }
       setName('');
       setUrl('');
+      setEditingSubscription(null);
       onSubClose();
     } catch (error) {
-      console.error('添加订阅失败:', error);
+      console.error(editingSubscription ? '更新订阅失败:' : '添加订阅失败:', error);
     } finally {
       setIsSubmitting(false);
     }
@@ -312,7 +333,7 @@ export default function Subscriptions() {
           <Button
             color="primary"
             startContent={<Plus className="w-4 h-4" />}
-            onPress={onSubOpen}
+            onPress={handleOpenAddSubscription}
           >
             添加订阅
           </Button>
@@ -320,31 +341,6 @@ export default function Subscriptions() {
       </div>
 
       <Tabs aria-label="节点管理">
-        <Tab key="countries" title="按国家/地区">
-          {countryGroups.length === 0 ? (
-            <Card className="mt-4">
-              <CardBody className="py-12 text-center">
-                <Globe className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-                <p className="text-gray-500">暂无节点，请先添加订阅或手动添加节点</p>
-              </CardBody>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
-              {countryGroups.map((group) => (
-                <Card key={group.code} className="hover:shadow-md transition-shadow">
-                  <CardBody className="flex flex-row items-center gap-3">
-                    <span className="text-3xl">{group.emoji}</span>
-                    <div>
-                      <h3 className="font-semibold">{group.name}</h3>
-                      <p className="text-sm text-gray-500">{group.node_count} 个节点</p>
-                    </div>
-                  </CardBody>
-                </Card>
-              ))}
-            </div>
-          )}
-        </Tab>
-
         <Tab key="subscriptions" title="订阅管理">
           {subscriptions.length === 0 ? (
             <Card className="mt-4">
@@ -360,6 +356,7 @@ export default function Subscriptions() {
                   key={sub.id}
                   subscription={sub}
                   onRefresh={() => handleRefresh(sub.id)}
+                  onEdit={() => handleOpenEditSubscription(sub)}
                   onDelete={() => handleDeleteSubscription(sub.id)}
                   loading={loading}
                 />
@@ -495,12 +492,37 @@ export default function Subscriptions() {
             </div>
           )}
         </Tab>
+
+        <Tab key="countries" title="按国家/地区">
+          {countryGroups.length === 0 ? (
+            <Card className="mt-4">
+              <CardBody className="py-12 text-center">
+                <Globe className="w-12 h-12 mx-auto text-gray-300 mb-4" />
+                <p className="text-gray-500">暂无节点，请先添加订阅或手动添加节点</p>
+              </CardBody>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
+              {countryGroups.map((group) => (
+                <Card key={group.code} className="hover:shadow-md transition-shadow">
+                  <CardBody className="flex flex-row items-center gap-3">
+                    <span className="text-3xl">{group.emoji}</span>
+                    <div>
+                      <h3 className="font-semibold">{group.name}</h3>
+                      <p className="text-sm text-gray-500">{group.node_count} 个节点</p>
+                    </div>
+                  </CardBody>
+                </Card>
+              ))}
+            </div>
+          )}
+        </Tab>
       </Tabs>
 
-      {/* 添加订阅弹窗 */}
+      {/* 添加/编辑订阅弹窗 */}
       <Modal isOpen={isSubOpen} onClose={onSubClose}>
         <ModalContent>
-          <ModalHeader>添加订阅</ModalHeader>
+          <ModalHeader>{editingSubscription ? '编辑订阅' : '添加订阅'}</ModalHeader>
           <ModalBody>
             <Input
               label="订阅名称"
@@ -521,11 +543,11 @@ export default function Subscriptions() {
             </Button>
             <Button
               color="primary"
-              onPress={handleAddSubscription}
+              onPress={handleSaveSubscription}
               isLoading={isSubmitting}
               isDisabled={!name || !url}
             >
-              添加
+              {editingSubscription ? '保存' : '添加'}
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -690,21 +712,22 @@ export default function Subscriptions() {
                 onChange={(e) => setFilterForm({ ...filterForm, name: e.target.value })}
                 isRequired
               />
-
               {/* 包含国家 */}
               <Select
                 label="包含国家"
                 placeholder="选择要包含的国家（可多选）"
                 selectionMode="multiple"
-                selectedKeys={new Set(filterForm.include_countries)}
-                onSelectionChange={(keys) => setFilterForm({
-                  ...filterForm,
-                  include_countries: Array.from(keys) as string[]
-                })}
+                selectedKeys={filterForm.include_countries}
+                onSelectionChange={(keys) => {
+                  setFilterForm({
+                    ...filterForm,
+                    include_countries: Array.from(keys) as string[]
+                  })
+                }}
               >
                 {countryOptions.map((opt) => (
                   <SelectItem key={opt.code} value={opt.code}>
-                    {opt.emoji} {opt.name}
+                    {opt.name}
                   </SelectItem>
                 ))}
               </Select>
@@ -714,7 +737,7 @@ export default function Subscriptions() {
                 label="排除国家"
                 placeholder="选择要排除的国家（可多选）"
                 selectionMode="multiple"
-                selectedKeys={new Set(filterForm.exclude_countries)}
+                selectedKeys={filterForm.exclude_countries}
                 onSelectionChange={(keys) => setFilterForm({
                   ...filterForm,
                   exclude_countries: Array.from(keys) as string[]
@@ -722,7 +745,7 @@ export default function Subscriptions() {
               >
                 {countryOptions.map((opt) => (
                   <SelectItem key={opt.code} value={opt.code}>
-                    {opt.emoji} {opt.name}
+                    {opt.name}
                   </SelectItem>
                 ))}
               </Select>
@@ -849,11 +872,14 @@ export default function Subscriptions() {
 interface SubscriptionCardProps {
   subscription: Subscription;
   onRefresh: () => void;
+  onEdit: () => void;
   onDelete: () => void;
   loading: boolean;
 }
 
-function SubscriptionCard({ subscription: sub, onRefresh, onDelete, loading }: SubscriptionCardProps) {
+function SubscriptionCard({ subscription: sub, onRefresh, onEdit, onDelete, loading }: SubscriptionCardProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   // 按国家分组节点
   const nodesByCountry = sub.nodes.reduce((acc, node) => {
     const country = node.country || 'OTHER';
@@ -869,7 +895,14 @@ function SubscriptionCard({ subscription: sub, onRefresh, onDelete, loading }: S
 
   return (
     <Card>
-      <CardHeader className="flex justify-between items-start">
+      <CardHeader
+        className="flex justify-between items-start cursor-pointer"
+        onClick={(e) => {
+          // 如果点击的是按钮区域，不触发展开
+          if ((e.target as HTMLElement).closest('button')) return;
+          setIsExpanded(!isExpanded);
+        }}
+      >
         <div className="flex items-center gap-3">
           <Chip
             color={sub.enabled ? 'success' : 'default'}
@@ -898,59 +931,77 @@ function SubscriptionCard({ subscription: sub, onRefresh, onDelete, loading }: S
           <Button
             size="sm"
             variant="flat"
+            startContent={<Pencil className="w-4 h-4" />}
+            onPress={onEdit}
+          >
+            编辑
+          </Button>
+          <Button
+            size="sm"
+            variant="flat"
             color="danger"
             startContent={<Trash2 className="w-4 h-4" />}
             onPress={onDelete}
           >
             删除
           </Button>
+          <Button
+            isIconOnly
+            size="sm"
+            variant="light"
+            onPress={() => setIsExpanded(!isExpanded)}
+          >
+            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </Button>
         </div>
       </CardHeader>
 
-      <CardBody className="pt-0">
-        {/* 流量信息 */}
-        {sub.traffic && (
-          <div className="flex gap-4 text-sm mb-4">
-            <span>已用: {formatBytes(sub.traffic.used)}</span>
-            <span>剩余: {formatBytes(sub.traffic.remaining)}</span>
-            <span>总计: {formatBytes(sub.traffic.total)}</span>
-            {sub.expire_at && (
-              <span>到期: {new Date(sub.expire_at).toLocaleDateString()}</span>
-            )}
-          </div>
-        )}
+      {isExpanded && (
+        <CardBody className="pt-0">
+          {/* 流量信息 */}
+          {sub.traffic && (
+            <div className="flex gap-4 text-sm mb-4">
+              <span>已用: {formatBytes(sub.traffic.used)}</span>
+              <span>剩余: {formatBytes(sub.traffic.remaining)}</span>
+              <span>总计: {formatBytes(sub.traffic.total)}</span>
+              {sub.expire_at && (
+                <span>到期: {new Date(sub.expire_at).toLocaleDateString()}</span>
+              )}
+            </div>
+          )}
 
-        {/* 按国家分组的节点列表 */}
-        <Accordion variant="bordered" selectionMode="multiple">
-          {Object.entries(nodesByCountry).map(([country, data]) => (
-            <AccordionItem
-              key={country}
-              aria-label={country}
-              title={
-                <div className="flex items-center gap-2">
-                  <span>{data.emoji}</span>
-                  <span>{country}</span>
-                  <Chip size="sm" variant="flat">{data.nodes.length}</Chip>
-                </div>
-              }
-            >
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                {data.nodes.map((node, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded text-sm"
-                  >
-                    <span className="truncate flex-1">{node.tag}</span>
-                    <Chip size="sm" variant="flat">
-                      {node.type}
-                    </Chip>
+          {/* 按国家分组的节点列表 */}
+          <Accordion variant="bordered" selectionMode="multiple">
+            {Object.entries(nodesByCountry).map(([country, data]) => (
+              <AccordionItem
+                key={country}
+                aria-label={country}
+                title={
+                  <div className="flex items-center gap-2">
+                    <span>{data.emoji}</span>
+                    <span>{country}</span>
+                    <Chip size="sm" variant="flat">{data.nodes.length}</Chip>
                   </div>
-                ))}
-              </div>
-            </AccordionItem>
-          ))}
-        </Accordion>
-      </CardBody>
+                }
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {data.nodes.map((node, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded text-sm"
+                    >
+                      <span className="truncate flex-1">{node.tag}</span>
+                      <Chip size="sm" variant="flat">
+                        {node.type}
+                      </Chip>
+                    </div>
+                  ))}
+                </div>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        </CardBody>
+      )}
     </Card>
   );
 }

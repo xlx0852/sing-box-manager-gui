@@ -78,21 +78,15 @@ func (pm *ProcessManager) recoverProcess() {
 	go pm.monitorProcess(pid)
 }
 
-// recoverFromPidFile 从 PID 文件恢复
+// recoverFromPidFile 从 PID 文件恢复（使用 kill -0 快速验证）
 func (pm *ProcessManager) recoverFromPidFile() int {
-	data, err := os.ReadFile(pm.pidFile)
-	if err != nil {
-		return 0 // PID 文件不存在
-	}
-
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
-		os.Remove(pm.pidFile)
+	pid := pm.readPidFile()
+	if pid <= 0 {
 		return 0
 	}
 
-	// 验证进程是否存在且是 sing-box
-	if !pm.isValidSingboxProcess(pid) {
+	// 使用 kill -0 快速验证进程是否存活
+	if !pm.isProcessAlive(pid) {
 		os.Remove(pm.pidFile)
 		return 0
 	}
@@ -101,31 +95,13 @@ func (pm *ProcessManager) recoverFromPidFile() int {
 	return pid
 }
 
-// findSingboxProcess 扫描系统进程查找 sing-box
+// findSingboxProcess 使用 pgrep 快速查找 sing-box 进程（启动时使用）
 func (pm *ProcessManager) findSingboxProcess() int {
-	procs, err := process.Processes()
-	if err != nil {
-		return 0
+	pid := pm.findSingboxByPgrep()
+	if pid > 0 {
+		logger.Printf("通过 pgrep 找到 sing-box 进程, PID: %d", pid)
 	}
-
-	for _, proc := range procs {
-		if !pm.isSingboxProcess(proc) {
-			continue
-		}
-
-		// 进一步验证命令行参数，确保是使用我们的配置文件
-		cmdline, err := proc.Cmdline()
-		if err == nil && strings.Contains(cmdline, pm.configPath) {
-			logger.Printf("通过进程扫描找到 sing-box (配置匹配), PID: %d", proc.Pid)
-			return int(proc.Pid)
-		}
-
-		// 如果没有匹配的配置文件，也接受（可能是相同的 sing-box）
-		logger.Printf("通过进程扫描找到 sing-box (未验证配置), PID: %d", proc.Pid)
-		return int(proc.Pid)
-	}
-
-	return 0
+	return pid
 }
 
 // isSingboxProcess 检查进程是否是 sing-box
@@ -155,21 +131,107 @@ func (pm *ProcessManager) isValidSingboxProcess(pid int) bool {
 	return pm.isSingboxProcess(proc)
 }
 
+// isProcessAlive 使用 kill -0 检查进程是否存活（更可靠）
+func (pm *ProcessManager) isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// kill -0 不发送信号，只检查进程是否存在
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// readPidFile 只读取 PID 文件，不验证进程类型（轻量级）
+func (pm *ProcessManager) readPidFile() int {
+	data, err := os.ReadFile(pm.pidFile)
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0
+	}
+	return pid
+}
+
+// findSingboxByPgrep 使用 pgrep 快速查找 sing-box 进程
+func (pm *ProcessManager) findSingboxByPgrep() int {
+	// pgrep -x 精确匹配进程名
+	cmd := exec.Command("pgrep", "-x", "sing-box")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	// pgrep 可能返回多行（多个进程），取第一个
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return 0
+	}
+
+	pid, err := strconv.Atoi(lines[0])
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
+// recoverState 恢复运行状态
+func (pm *ProcessManager) recoverState(pid int) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if !pm.running {
+		pm.running = true
+		pm.pid = pid
+		// 更新 PID 文件
+		os.WriteFile(pm.pidFile, []byte(strconv.Itoa(pid)), 0644)
+		logger.Printf("检测到 sing-box 进程仍在运行，已恢复状态, PID: %d", pid)
+
+		// 重新启动监控
+		go pm.monitorProcess(pid)
+	}
+}
+
 // monitorProcess 监控已恢复的进程（当没有 cmd 对象时使用）
 func (pm *ProcessManager) monitorProcess(pid int) {
+	failCount := 0
+	maxFails := 3 // 连续失败 3 次才认为退出
+
 	for {
 		time.Sleep(2 * time.Second)
 
-		// 检查进程是否仍在运行
-		if !pm.isValidSingboxProcess(pid) {
-			pm.mu.Lock()
-			pm.running = false
-			pm.pid = 0
-			pm.mu.Unlock()
-			os.Remove(pm.pidFile)
-			logger.Printf("sing-box 进程已退出, PID: %d", pid)
-			return
+		// 优先使用 kill -0 检查（更可靠）
+		if pm.isProcessAlive(pid) {
+			failCount = 0
+			continue
 		}
+
+		// kill -0 失败，再用 gopsutil 检查
+		if pm.isValidSingboxProcess(pid) {
+			failCount = 0
+			continue
+		}
+
+		// 两种方法都失败，计数
+		failCount++
+		if failCount < maxFails {
+			logger.Printf("sing-box 进程检测失败 (%d/%d), PID: %d", failCount, maxFails, pid)
+			continue
+		}
+
+		// 连续失败达到阈值，认为进程退出
+		pm.mu.Lock()
+		pm.running = false
+		pm.pid = 0
+		pm.mu.Unlock()
+		os.Remove(pm.pidFile)
+		logger.Printf("sing-box 进程已退出, PID: %d", pid)
+		return
 	}
 }
 
@@ -329,11 +391,49 @@ func (pm *ProcessManager) Reload() error {
 	return nil
 }
 
-// IsRunning 检查是否运行中
+// IsRunning 检查是否运行中（带实时检测和自动恢复）
 func (pm *ProcessManager) IsRunning() bool {
 	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return pm.running
+	running := pm.running
+	pid := pm.pid
+	cmd := pm.cmd
+	pm.mu.RUnlock()
+
+	// 1. 如果内存状态是运行中，直接返回 true
+	if running {
+		return true
+	}
+
+	// 2. 内存状态是未运行，但尝试实际检测进程是否存活
+
+	// 2.1 检查保存的 PID
+	if pid > 0 && pm.isProcessAlive(pid) {
+		pm.recoverState(pid)
+		return true
+	}
+
+	// 2.2 检查 cmd 对象的 PID
+	if cmd != nil && cmd.Process != nil {
+		cmdPid := cmd.Process.Pid
+		if pm.isProcessAlive(cmdPid) {
+			pm.recoverState(cmdPid)
+			return true
+		}
+	}
+
+	// 2.3 兜底：从 PID 文件恢复 (读文件 + kill -0，很快)
+	if filePid := pm.readPidFile(); filePid > 0 && pm.isProcessAlive(filePid) {
+		pm.recoverState(filePid)
+		return true
+	}
+
+	// 2.4 兜底：用 pgrep 快速查找 (替代 gopsutil 全量扫描)
+	if pgrepPid := pm.findSingboxByPgrep(); pgrepPid > 0 {
+		pm.recoverState(pgrepPid)
+		return true
+	}
+
+	return false
 }
 
 // GetPID 获取进程 ID

@@ -17,11 +17,14 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
-  const { settings, fetchSettings } = useStore();
+  const { settings, fetchSettings, serviceStatus, fetchServiceStatus } = useStore();
 
   useEffect(() => {
     if (!settings) {
       fetchSettings();
+    }
+    if (!serviceStatus) {
+      fetchServiceStatus();
     }
   }, []);
 
@@ -70,6 +73,11 @@ export default function Layout({ children }: LayoutProps) {
           >
             打开 Zashboard
           </a>
+          {serviceStatus?.sbm_version && (
+            <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-2">
+              v{serviceStatus.sbm_version}
+            </p>
+          )}
         </div>
       </aside>
 

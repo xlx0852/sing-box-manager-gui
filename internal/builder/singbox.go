@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/xiaobei/singbox-manager/internal/storage"
@@ -695,7 +696,18 @@ func (b *ConfigBuilder) buildRoute() *RouteConfig {
 		case "ip_cidr":
 			routeRule["ip_cidr"] = rule.Values
 		case "port":
-			routeRule["port"] = rule.Values
+			// 将端口字符串转换为整数
+			var ports []uint16
+			for _, v := range rule.Values {
+				if port, err := strconv.ParseUint(v, 10, 16); err == nil {
+					ports = append(ports, uint16(port))
+				}
+			}
+			if len(ports) == 1 {
+				routeRule["port"] = ports[0]
+			} else if len(ports) > 1 {
+				routeRule["port"] = ports
+			}
 		case "geosite":
 			var tags []string
 			for _, v := range rule.Values {

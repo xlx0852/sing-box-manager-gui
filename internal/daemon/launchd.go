@@ -188,15 +188,19 @@ func (lm *LaunchdManager) Restart() error {
 	// 尝试启动服务（忽略命令错误，因为 KeepAlive 可能已经自动重启）
 	exec.Command("launchctl", "start", lm.label).Run()
 
-	// 再等待一下让服务启动
-	time.Sleep(200 * time.Millisecond)
+	// 使用重试机制检查服务是否启动成功
+	// sbm 是 web 服务，可能需要更多时间启动
+	maxRetries := 20
+	retryInterval := 500 * time.Millisecond
 
-	// 检查服务是否真正在运行
-	if !lm.IsRunning() {
-		return fmt.Errorf("服务重启失败：服务未运行")
+	for i := 0; i < maxRetries; i++ {
+		time.Sleep(retryInterval)
+		if lm.IsRunning() {
+			return nil // 服务启动成功
+		}
 	}
 
-	return nil
+	return fmt.Errorf("服务重启失败：服务在 %v 内未能启动", time.Duration(maxRetries)*retryInterval)
 }
 
 // IsInstalled 检查是否已安装

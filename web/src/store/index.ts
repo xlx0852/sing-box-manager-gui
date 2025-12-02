@@ -110,6 +110,7 @@ export interface ServiceStatus {
   running: boolean;
   pid: number;
   version: string;
+  sbm_version: string;
 }
 
 export interface ProcessStats {

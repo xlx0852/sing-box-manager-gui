@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	version = "0.1.0"
+	version = "0.2.0"
 	dataDir string
 	port    int
 )
@@ -77,7 +77,7 @@ func main() {
 	}
 
 	// 创建 API 服务器
-	server := api.NewServer(store, processManager, launchdManager, execPath, port)
+	server := api.NewServer(store, processManager, launchdManager, execPath, port, version)
 
 	// 启动定时任务调度器
 	server.StartScheduler()

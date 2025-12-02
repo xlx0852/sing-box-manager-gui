@@ -34,10 +34,11 @@ type Server struct {
 	router         *gin.Engine
 	sbmPath        string // sbm 可执行文件路径
 	port           int    // Web 服务端口
+	version        string // sbm 版本号
 }
 
 // NewServer 创建 API 服务器
-func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, launchdManager *daemon.LaunchdManager, sbmPath string, port int) *Server {
+func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, launchdManager *daemon.LaunchdManager, sbmPath string, port int, version string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 
 	subService := service.NewSubscriptionService(store)
@@ -55,6 +56,7 @@ func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, 
 		router:         gin.Default(),
 		sbmPath:        sbmPath,
 		port:           port,
+		version:        version,
 	}
 
 	// 设置调度器的更新回调
@@ -594,9 +596,10 @@ func (s *Server) getServiceStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"running": running,
-			"pid":     pid,
-			"version": version,
+			"running":     running,
+			"pid":         pid,
+			"version":     version,
+			"sbm_version": s.version,
 		},
 	})
 }

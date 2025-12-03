@@ -226,7 +226,8 @@ var CountryNames = map[string]string{
 	"CL": "智利",
 	"CO": "哥伦比亚",
 	"PE": "秘鲁",
-	"NZ": "新西兰",
+	"NZ":    "新西兰",
+	"OTHER": "其他",
 }
 
 // CountryEmojis 国家代码到 emoji 的映射
@@ -273,7 +274,8 @@ var CountryEmojis = map[string]string{
 	"CL": "🇨🇱",
 	"CO": "🇨🇴",
 	"PE": "🇵🇪",
-	"NZ": "🇳🇿",
+	"NZ":    "🇳🇿",
+	"OTHER": "🌐",
 }
 
 // GetCountryName 获取国家名称

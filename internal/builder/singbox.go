@@ -396,6 +396,9 @@ func (b *ConfigBuilder) buildOutbounds() []Outbound {
 		// 按国家分组
 		if node.Country != "" {
 			countryNodes[node.Country] = append(countryNodes[node.Country], tag)
+		} else {
+			// 未识别国家的节点归入 "其他" 分组
+			countryNodes["OTHER"] = append(countryNodes["OTHER"], tag)
 		}
 	}
 
@@ -490,11 +493,10 @@ func (b *ConfigBuilder) buildOutbounds() []Outbound {
 		})
 	}
 
-	// 创建主选择器
+	// 创建主选择器（精简版：只包含分组，不包含单节点）
 	proxyOutbounds := []string{"Auto"}
 	proxyOutbounds = append(proxyOutbounds, countryGroupTags...) // 添加国家分组
 	proxyOutbounds = append(proxyOutbounds, filterGroupTags...)
-	proxyOutbounds = append(proxyOutbounds, allNodeTags...)
 
 	outbounds = append(outbounds, Outbound{
 		"tag":       "Proxy",
@@ -509,10 +511,18 @@ func (b *ConfigBuilder) buildOutbounds() []Outbound {
 			continue
 		}
 
-		selectorOutbounds := []string{"Proxy", "Auto", "DIRECT", "REJECT"}
-		selectorOutbounds = append(selectorOutbounds, countryGroupTags...) // 添加国家分组
-		selectorOutbounds = append(selectorOutbounds, filterGroupTags...)
-		selectorOutbounds = append(selectorOutbounds, allNodeTags...)
+		var selectorOutbounds []string
+
+		// 根据规则组的默认出站类型决定可选项
+		if rg.Outbound == "DIRECT" || rg.Outbound == "REJECT" {
+			// 直连/拦截规则组：只提供基础选项
+			selectorOutbounds = []string{"DIRECT", "REJECT", "Proxy"}
+		} else {
+			// 代理规则组：提供完整选项（但不包含单节点）
+			selectorOutbounds = []string{"Proxy", "Auto", "DIRECT", "REJECT"}
+			selectorOutbounds = append(selectorOutbounds, countryGroupTags...) // 添加国家分组
+			selectorOutbounds = append(selectorOutbounds, filterGroupTags...)
+		}
 
 		outbounds = append(outbounds, Outbound{
 			"tag":       rg.Name,
@@ -668,6 +678,29 @@ func (b *ConfigBuilder) buildRoute() *RouteConfig {
 		"protocol": "dns",
 		"action":   "hijack-dns",
 	})
+
+	// 3. 添加 hosts 域名的路由规则（优先级高，在其他规则之前）
+	// 使用 override_address 直接指定目标 IP，避免 DIRECT outbound 重新 DNS 解析
+	// 这解决了 sniff_override_destination 导致的 NXDOMAIN 问题
+	systemHosts := ParseSystemHosts()
+	for domain, ips := range systemHosts {
+		if len(ips) > 0 {
+			rules = append(rules, RouteRule{
+				"domain":           []string{domain},
+				"outbound":         "DIRECT",
+				"override_address": ips[0],
+			})
+		}
+	}
+	for _, host := range b.settings.Hosts {
+		if host.Enabled && host.Domain != "" && len(host.IPs) > 0 {
+			rules = append(rules, RouteRule{
+				"domain":           []string{host.Domain},
+				"outbound":         "DIRECT",
+				"override_address": host.IPs[0],
+			})
+		}
+	}
 
 	// 按优先级排序自定义规则
 	sortedRules := make([]storage.Rule, len(b.rules))

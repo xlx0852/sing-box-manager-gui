@@ -21,6 +21,7 @@ type ClashProxy struct {
 	Server         string                 `yaml:"server"`
 	Port           int                    `yaml:"port"`
 	Password       string                 `yaml:"password,omitempty"`
+	Username       string                 `yaml:"username,omitempty"` // SOCKS 用户名
 	UUID           string                 `yaml:"uuid,omitempty"`
 	Cipher         string                 `yaml:"cipher,omitempty"`
 	AlterId        int                    `yaml:"alterId,omitempty"`
@@ -172,6 +173,23 @@ func convertClashProxy(proxy ClashProxy) (*storage.Node, error) {
 		}
 		if proxy.ReduceRTT {
 			extra["zero_rtt_handshake"] = true
+		}
+
+	case "socks", "socks5":
+		nodeType = "socks"
+		extra["version"] = "5"
+		if proxy.Username != "" {
+			extra["username"] = proxy.Username
+		}
+		if proxy.Password != "" {
+			extra["password"] = proxy.Password
+		}
+
+	case "socks4":
+		nodeType = "socks"
+		extra["version"] = "4"
+		if proxy.Username != "" {
+			extra["username"] = proxy.Username
 		}
 
 	default:

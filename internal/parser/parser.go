@@ -44,6 +44,8 @@ func ParseURL(rawURL string) (*storage.Node, error) {
 		parser = &Hysteria2Parser{}
 	case "tuic":
 		parser = &TuicParser{}
+	case "socks", "socks5", "socks4", "socks4a":
+		parser = &SocksParser{}
 	default:
 		return nil, fmt.Errorf("不支持的协议: %s", protocol)
 	}

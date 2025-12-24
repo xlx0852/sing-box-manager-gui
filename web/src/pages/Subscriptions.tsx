@@ -41,6 +41,7 @@ const nodeTypeOptions = [
   { value: 'trojan', label: 'Trojan' },
   { value: 'hysteria2', label: 'Hysteria2' },
   { value: 'tuic', label: 'TUIC' },
+  { value: 'socks', label: 'SOCKS' },
 ];
 
 const countryOptions = [
@@ -565,7 +566,7 @@ export default function Subscriptions() {
                   <div className="flex gap-2">
                     <Input
                       label="节点链接"
-                      placeholder="粘贴节点链接，如 hysteria2://... vmess://... ss://..."
+                      placeholder="粘贴节点链接，如 hysteria2://... vmess://... ss://... socks://..."
                       value={nodeUrl}
                       onChange={(e) => setNodeUrl(e.target.value)}
                       startContent={<Link className="w-4 h-4 text-gray-400" />}
@@ -586,7 +587,7 @@ export default function Subscriptions() {
                     <p className="text-sm text-danger">{parseError}</p>
                   )}
                   <p className="text-xs text-gray-400">
-                    支持的协议: ss://, vmess://, vless://, trojan://, hysteria2://, tuic://
+                    支持的协议: ss://, vmess://, vless://, trojan://, hysteria2://, tuic://, socks://
                   </p>
                 </div>
               )}

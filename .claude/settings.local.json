@@ -29,7 +29,12 @@
       "Bash(./sbm:*)",
       "Bash(git stash:*)",
       "Bash(mkdir:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(go run:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

@@ -320,6 +320,18 @@ func convertClashProxy(proxy ClashProxy) (*storage.Node, error) {
 				reality["short_id"] = proxy.RealityOpts.ShortID
 			}
 			tls["reality"] = reality
+
+			// Reality 必须要有 uTLS 配置，如果没有设置则使用默认值
+			if _, ok := tls["utls"]; !ok {
+				fp := proxy.Fingerprint
+				if fp == "" {
+					fp = "chrome" // 默认使用 chrome fingerprint
+				}
+				tls["utls"] = map[string]interface{}{
+					"enabled":     true,
+					"fingerprint": fp,
+				}
+			}
 		}
 
 		extra["tls"] = tls

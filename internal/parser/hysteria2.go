@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/xiaobei/singbox-manager/internal/storage"
@@ -67,9 +68,12 @@ func (p *Hysteria2Parser) Parse(rawURL string) (*storage.Node, error) {
 		"enabled": true,
 	}
 
-	// SNI
+	// SNI - 如果没有指定，使用服务器地址作为默认值
 	if sni := params.Get("sni"); sni != "" {
 		tls["server_name"] = sni
+	} else {
+		// 默认使用服务器地址
+		tls["server_name"] = server
 	}
 
 	// 跳过证书验证
@@ -93,17 +97,23 @@ func (p *Hysteria2Parser) Parse(rawURL string) (*storage.Node, error) {
 		extra["obfs"] = obfs
 	}
 
-	// 带宽配置
+	// 带宽配置 - 统一转换为 up_mbps/down_mbps
 	if up := params.Get("upmbps"); up != "" {
 		extra["up_mbps"] = getParamInt(params, "upmbps", 0)
 	} else if up := params.Get("up"); up != "" {
-		extra["up"] = up
+		// 解析带宽字符串为整数
+		if mbps := parseBandwidth(up); mbps > 0 {
+			extra["up_mbps"] = mbps
+		}
 	}
 
 	if down := params.Get("downmbps"); down != "" {
 		extra["down_mbps"] = getParamInt(params, "downmbps", 0)
 	} else if down := params.Get("down"); down != "" {
-		extra["down"] = down
+		// 解析带宽字符串为整数
+		if mbps := parseBandwidth(down); mbps > 0 {
+			extra["down_mbps"] = mbps
+		}
 	}
 
 	// 端口跳跃
@@ -125,4 +135,17 @@ func (p *Hysteria2Parser) Parse(rawURL string) (*storage.Node, error) {
 	}
 
 	return node, nil
+}
+
+// parseBandwidth 解析带宽字符串为 Mbps 整数
+// 支持格式: "100", "100Mbps", "100 mbps", "100M" 等
+func parseBandwidth(s string) int {
+	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimSuffix(s, "mbps")
+	s = strings.TrimSuffix(s, "m")
+	s = strings.TrimSpace(s)
+	if v, err := strconv.Atoi(s); err == nil && v > 0 {
+		return v
+	}
+	return 0
 }

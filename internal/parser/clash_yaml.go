@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/xiaobei/singbox-manager/internal/storage"
@@ -154,12 +155,35 @@ func convertClashProxy(proxy ClashProxy) (*storage.Node, error) {
 				"password": proxy.ObfsPassword,
 			}
 		}
+		// 带宽配置 - 转换为 up_mbps/down_mbps
 		if proxy.Up != "" {
-			extra["up"] = proxy.Up
+			if mbps := parseBandwidthClash(proxy.Up); mbps > 0 {
+				extra["up_mbps"] = mbps
+			}
 		}
 		if proxy.Down != "" {
-			extra["down"] = proxy.Down
+			if mbps := parseBandwidthClash(proxy.Down); mbps > 0 {
+				extra["down_mbps"] = mbps
+			}
 		}
+		// Hysteria2 必须启用 TLS
+		tls := map[string]interface{}{
+			"enabled": true,
+		}
+		if proxy.SNI != "" {
+			tls["server_name"] = proxy.SNI
+		} else if proxy.Servername != "" {
+			tls["server_name"] = proxy.Servername
+		} else {
+			tls["server_name"] = proxy.Server
+		}
+		if proxy.SkipCertVerify {
+			tls["insecure"] = true
+		}
+		if len(proxy.ALPN) > 0 {
+			tls["alpn"] = proxy.ALPN
+		}
+		extra["tls"] = tls
 
 	case "tuic":
 		nodeType = "tuic"
@@ -319,4 +343,17 @@ func convertClashProxy(proxy ClashProxy) (*storage.Node, error) {
 	}
 
 	return node, nil
+}
+
+// parseBandwidthClash 解析带宽字符串为 Mbps 整数
+// 支持格式: "100", "100Mbps", "100 mbps", "100M" 等
+func parseBandwidthClash(s string) int {
+	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimSuffix(s, "mbps")
+	s = strings.TrimSuffix(s, "m")
+	s = strings.TrimSpace(s)
+	if v, err := strconv.Atoi(s); err == nil && v > 0 {
+		return v
+	}
+	return 0
 }

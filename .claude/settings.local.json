@@ -34,7 +34,9 @@
       "Bash(git pull:*)",
       "Bash(git cherry-pick:*)",
       "Bash(go run:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(git merge:*)"
     ],
     "deny": [],
     "ask": []

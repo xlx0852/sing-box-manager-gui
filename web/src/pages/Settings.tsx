@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { Card, CardBody, CardHeader, Input, Button, Switch, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Progress, Textarea, useDisclosure } from '@nextui-org/react';
-import { Save, Download, Upload, Terminal, CheckCircle, AlertCircle, Plus, Pencil, Trash2, Server } from 'lucide-react';
+import { Save, Download, Upload, Terminal, CheckCircle, AlertCircle, Plus, Pencil, Trash2, Server, Eye, EyeOff, Copy, RefreshCw, Wifi } from 'lucide-react';
 import { useStore } from '../store';
 import type { Settings as SettingsType, HostEntry } from '../store';
 import { daemonApi, kernelApi, settingsApi } from '../api';
@@ -50,6 +50,9 @@ export default function Settings() {
   const [editingHost, setEditingHost] = useState<HostEntry | null>(null);
   const [hostFormData, setHostFormData] = useState({ domain: '', enabled: true });
   const [ipsText, setIpsText] = useState('');
+
+  // 密钥显示状态
+  const [showSecret, setShowSecret] = useState(false);
 
   useEffect(() => {
     fetchSettings();
@@ -193,6 +196,60 @@ export default function Settings() {
     } catch (error) {
       console.error('获取版本列表失败:', error);
     }
+  };
+
+  // 复制密钥到剪贴板（兼容非HTTPS环境）
+  const handleCopySecret = () => {
+    if (!formData?.clash_api_secret) return;
+
+    const text = formData.clash_api_secret;
+
+    // 优先尝试现代 API
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => {
+        toast.success('密钥已复制到剪贴板');
+      }).catch(() => {
+        fallbackCopy(text);
+      });
+    } else {
+      fallbackCopy(text);
+    }
+  };
+
+  // 兼容性复制方法（支持非HTTPS环境）
+  const fallbackCopy = (text: string) => {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+      const success = document.execCommand('copy');
+      if (success) {
+        toast.success('密钥已复制到剪贴板');
+      } else {
+        toast.error('复制失败');
+      }
+    } catch {
+      toast.error('复制失败');
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  };
+
+  // 生成新的随机密钥
+  const handleGenerateSecret = () => {
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let secret = '';
+    for (let i = 0; i < 16; i++) {
+      secret += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+    setFormData({ ...formData!, clash_api_secret: secret });
+    toast.success('已生成新密钥，请保存设置');
   };
 
   const handleSave = async () => {
@@ -395,6 +452,88 @@ export default function Settings() {
               onValueChange={(enabled) => setFormData({ ...formData, tun_enabled: enabled })}
             />
           </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium flex items-center gap-2">
+                <Wifi className="w-4 h-4" />
+                允许局域网访问
+              </p>
+              <p className="text-sm text-gray-500">允许局域网内其他设备通过本机代理上网</p>
+            </div>
+            <Switch
+              isSelected={formData.allow_lan}
+              onValueChange={(enabled) => {
+                const updates: Partial<typeof formData> = { allow_lan: enabled };
+                if (enabled) {
+                  // 开启局域网访问且密钥为空时，自动生成密钥
+                  if (!formData.clash_api_secret) {
+                    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+                    let secret = '';
+                    for (let i = 0; i < 16; i++) {
+                      secret += charset.charAt(Math.floor(Math.random() * charset.length));
+                    }
+                    updates.clash_api_secret = secret;
+                  }
+                } else {
+                  // 关闭局域网访问时，清除密钥
+                  updates.clash_api_secret = '';
+                }
+                setFormData({ ...formData, ...updates });
+              }}
+            />
+          </div>
+
+          {/* ClashAPI 密钥 - 仅在开启局域网访问时显示 */}
+          {formData.allow_lan && (
+            <div className="p-4 rounded-lg bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-800">
+              <div className="flex items-center gap-2 mb-2">
+                <p className="font-medium text-warning-700 dark:text-warning-400">ClashAPI 密钥</p>
+                <Chip size="sm" color="warning" variant="flat">安全</Chip>
+              </div>
+              <p className="text-sm text-warning-600 dark:text-warning-500 mb-3">
+                此密钥用于 zashboard 等外部 UI 连接时的认证，请妥善保管
+              </p>
+              <div className="flex items-center gap-2">
+                <Input
+                  type={showSecret ? "text" : "password"}
+                  value={formData.clash_api_secret || ''}
+                  onChange={(e) => setFormData({ ...formData, clash_api_secret: e.target.value })}
+                  placeholder="保存设置后将自动生成"
+                  size="sm"
+                  className="flex-1"
+                  endContent={
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="light"
+                      onPress={() => setShowSecret(!showSecret)}
+                    >
+                      {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </Button>
+                  }
+                />
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="flat"
+                  onPress={handleCopySecret}
+                  isDisabled={!formData.clash_api_secret}
+                  title="复制密钥"
+                >
+                  <Copy className="w-4 h-4" />
+                </Button>
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="flat"
+                  onPress={handleGenerateSecret}
+                  title="重新生成"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardBody>
       </Card>
 

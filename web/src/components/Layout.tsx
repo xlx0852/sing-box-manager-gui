@@ -66,7 +66,18 @@ export default function Layout({ children }: LayoutProps) {
         {/* 底部链接 */}
         <div className="sticky bottom-4 left-4 right-4 mt-auto pt-4">
           <a
-            href={`http://127.0.0.1:${clashApiPort}/ui/`}
+            href={(() => {
+              const baseUrl = `http://127.0.0.1:${clashApiPort}/ui/`;
+              const params = new URLSearchParams({
+                hostname: '127.0.0.1',
+                port: String(clashApiPort),
+                label: 'SingBox Manager'
+              });
+              if (settings?.clash_api_secret) {
+                params.set('secret', settings.clash_api_secret);
+              }
+              return `${baseUrl}?${params.toString()}`;
+            })()}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 px-4 py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-primary transition-colors"

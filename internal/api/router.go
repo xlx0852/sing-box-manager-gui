@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
 	"os"
@@ -23,6 +25,16 @@ import (
 	"github.com/xiaobei/singbox-manager/internal/storage"
 	"github.com/xiaobei/singbox-manager/web"
 )
+
+// generateRandomSecret 生成随机密钥
+func generateRandomSecret(length int) string {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		// 如果加密随机数生成失败，返回空字符串
+		return ""
+	}
+	return hex.EncodeToString(bytes)[:length]
+}
 
 // Server API 服务器
 type Server struct {
@@ -87,7 +99,7 @@ func (s *Server) setupRoutes() {
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
+		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
 	}))
 
@@ -572,6 +584,17 @@ func (s *Server) updateSettings(c *gin.Context) {
 		return
 	}
 
+	// 根据局域网访问设置处理 secret
+	if settings.AllowLAN {
+		// 开启局域网访问且 secret 为空时，自动生成一个
+		if settings.ClashAPISecret == "" {
+			settings.ClashAPISecret = generateRandomSecret(16)
+		}
+	} else {
+		// 关闭局域网访问时，清除 secret
+		settings.ClashAPISecret = ""
+	}
+
 	if err := s.store.UpdateSettings(&settings); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -585,11 +608,11 @@ func (s *Server) updateSettings(c *gin.Context) {
 
 	// 自动应用配置
 	if err := s.autoApplyConfig(); err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "更新成功，但自动应用配置失败: " + err.Error()})
+		c.JSON(http.StatusOK, gin.H{"data": settings, "warning": "更新成功，但自动应用配置失败: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "更新成功"})
+	c.JSON(http.StatusOK, gin.H{"data": settings, "message": "更新成功"})
 }
 
 // ==================== 系统 hosts API ====================

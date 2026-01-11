@@ -108,6 +108,7 @@ type Settings struct {
 	// 入站配置
 	MixedPort  int  `json:"mixed_port"`  // HTTP/SOCKS5 混合端口
 	TunEnabled bool `json:"tun_enabled"` // TUN 模式
+	AllowLAN   bool `json:"allow_lan"`   // 允许局域网访问
 
 	// DNS 配置
 	ProxyDNS  string      `json:"proxy_dns"`        // 代理 DNS
@@ -115,9 +116,10 @@ type Settings struct {
 	Hosts     []HostEntry `json:"hosts,omitempty"`  // DNS hosts 映射
 
 	// 控制面板
-	WebPort      int    `json:"web_port"`       // 管理界面端口
-	ClashAPIPort int    `json:"clash_api_port"` // Clash API 端口
-	ClashUIPath  string `json:"clash_ui_path"`  // zashboard 路径
+	WebPort        int    `json:"web_port"`          // 管理界面端口
+	ClashAPIPort   int    `json:"clash_api_port"`    // Clash API 端口
+	ClashUIPath    string `json:"clash_ui_path"`     // zashboard 路径
+	ClashAPISecret string `json:"clash_api_secret"`  // ClashAPI 密钥
 
 	// 漏网规则
 	FinalOutbound string `json:"final_outbound"` // 默认出站
@@ -140,11 +142,13 @@ func DefaultSettings() *Settings {
 		ConfigPath:           "generated/config.json",
 		MixedPort:            2080,
 		TunEnabled:           true,
+		AllowLAN:             false, // 默认不允许局域网访问
 		ProxyDNS:             "https://1.1.1.1/dns-query",
 		DirectDNS:            "https://dns.alidns.com/dns-query",
 		WebPort:              9090,
 		ClashAPIPort:         9091,
 		ClashUIPath:          "zashboard",
+		ClashAPISecret:       "", // 默认为空，开启局域网时自动生成
 		FinalOutbound:        "Proxy",
 		RuleSetBaseURL:       "https://github.com/lyc8503/sing-box-rules/raw/rule-set-geosite",
 		AutoApply:            true, // 默认开启自动应用

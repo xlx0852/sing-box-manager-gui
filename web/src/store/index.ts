@@ -93,12 +93,14 @@ export interface Settings {
   config_path: string;
   mixed_port: number;
   tun_enabled: boolean;
+  allow_lan: boolean;              // 允许局域网访问
   proxy_dns: string;
   direct_dns: string;
   hosts?: HostEntry[];           // DNS hosts 映射
   web_port: number;
   clash_api_port: number;
   clash_ui_path: string;
+  clash_api_secret: string;        // ClashAPI 密钥
   final_outbound: string;
   ruleset_base_url: string;
   auto_apply: boolean;           // 配置变更后自动应用
@@ -402,8 +404,13 @@ export const useStore = create<AppState>((set, get) => ({
 
   updateSettings: async (settings: Settings) => {
     try {
-      await settingsApi.update(settings);
-      set({ settings });
+      const res = await settingsApi.update(settings);
+      // 使用后端返回的数据（可能包含自动生成的密钥）
+      if (res.data.data) {
+        set({ settings: res.data.data });
+      } else {
+        set({ settings });
+      }
     } catch (error) {
       console.error('更新设置失败:', error);
     }

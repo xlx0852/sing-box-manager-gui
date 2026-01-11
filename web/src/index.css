@@ -11,6 +11,33 @@ body {
   min-height: 100vh;
 }
 
+/* 优化阴影效果 - 极简设计，几乎去除所有阴影 */
+/* 覆盖 Card 组件的阴影 - 使用边框代替 */
+.nextui-card,
+[data-slot="base"] {
+  box-shadow: none !important;
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+}
+
+/* 优化 Modal 和 Dropdown 的阴影 - 极轻的阴影 */
+[data-slot="backdrop"],
+[role="dialog"],
+.nextui-dropdown-menu {
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.03) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+/* 优化 Button 的阴影 */
+.nextui-button {
+  box-shadow: none !important;
+}
+
+/* Input 组件去除阴影 */
+.nextui-input-wrapper,
+[data-slot="input-wrapper"] {
+  box-shadow: none !important;
+}
+
 /* Toast 动画 */
 @keyframes slide-in {
   from {

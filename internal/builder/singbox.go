@@ -134,14 +134,14 @@ type CacheFileConfig struct {
 // ConfigBuilder 配置生成器
 type ConfigBuilder struct {
 	settings   *storage.Settings
-	nodes      []storage.Node
+	nodes      []*storage.Node
 	filters    []storage.Filter
 	rules      []storage.Rule
 	ruleGroups []storage.RuleGroup
 }
 
 // NewConfigBuilder 创建配置生成器
-func NewConfigBuilder(settings *storage.Settings, nodes []storage.Node, filters []storage.Filter, rules []storage.Rule, ruleGroups []storage.RuleGroup) *ConfigBuilder {
+func NewConfigBuilder(settings *storage.Settings, nodes []*storage.Node, filters []storage.Filter, rules []storage.Rule, ruleGroups []storage.RuleGroup) *ConfigBuilder {
 	return &ConfigBuilder{
 		settings:   settings,
 		nodes:      nodes,
@@ -561,7 +561,7 @@ func (b *ConfigBuilder) buildOutbounds() []Outbound {
 }
 
 // nodeToOutbound 将节点转换为出站配置
-func (b *ConfigBuilder) nodeToOutbound(node storage.Node) Outbound {
+func (b *ConfigBuilder) nodeToOutbound(node *storage.Node) Outbound {
 	outbound := Outbound{
 		"tag":         node.Tag,
 		"type":        node.Type,
@@ -578,7 +578,7 @@ func (b *ConfigBuilder) nodeToOutbound(node storage.Node) Outbound {
 }
 
 // matchFilter 检查节点是否匹配过滤器
-func (b *ConfigBuilder) matchFilter(node storage.Node, filter storage.Filter) bool {
+func (b *ConfigBuilder) matchFilter(node *storage.Node, filter storage.Filter) bool {
 	name := strings.ToLower(node.Tag)
 
 	// 1. 检查国家包含条件

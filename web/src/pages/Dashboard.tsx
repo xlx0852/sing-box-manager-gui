@@ -6,7 +6,13 @@ import { serviceApi, configApi } from '../api';
 import { toast } from '../components/Toast';
 
 export default function Dashboard() {
-  const { serviceStatus, subscriptions, systemInfo, fetchServiceStatus, fetchSubscriptions, fetchSystemInfo } = useStore();
+  // 使用选择器优化渲染性能
+  const serviceStatus = useStore(state => state.serviceStatus);
+  const subscriptions = useStore(state => state.subscriptions);
+  const systemInfo = useStore(state => state.systemInfo);
+  const fetchServiceStatus = useStore(state => state.fetchServiceStatus);
+  const fetchSubscriptions = useStore(state => state.fetchSubscriptions);
+  const fetchSystemInfo = useStore(state => state.fetchSystemInfo);
 
   // 错误模态框状态
   const [errorModal, setErrorModal] = useState<{
@@ -30,17 +36,36 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    // 初始加载
     fetchServiceStatus();
     fetchSubscriptions();
     fetchSystemInfo();
 
-    // 每 5 秒刷新状态和系统信息
-    const interval = setInterval(() => {
-      fetchServiceStatus();
-      fetchSystemInfo();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    // 轮询函数 - 仅在页面可见时执行
+    const poll = () => {
+      if (!document.hidden) {
+        fetchServiceStatus();
+        fetchSystemInfo();
+      }
+    };
+
+    // 每 5 秒轮询
+    const interval = setInterval(poll, 5000);
+
+    // 页面可见性变化时立即刷新
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        poll();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [fetchServiceStatus, fetchSubscriptions, fetchSystemInfo]);
 
   const handleStart = async () => {
     try {

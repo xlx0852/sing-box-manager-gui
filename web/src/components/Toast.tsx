@@ -55,7 +55,7 @@ const ToastItem = ({ toast, onClose }: { toast: Toast; onClose: () => void }) =>
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg ${bgColors[toast.type]} animate-slide-in`}
+      className={`flex items-center gap-3 px-4 py-3 rounded-lg border ${bgColors[toast.type]} animate-slide-in`}
     >
       {icons[toast.type]}
       <span className={`flex-1 text-sm ${textColors[toast.type]}`}>{toast.message}</span>

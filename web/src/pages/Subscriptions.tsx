@@ -511,7 +511,7 @@ export default function Subscriptions() {
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
               {countryGroups.map((group) => (
-                <Card key={group.code} className="hover:shadow-md transition-shadow">
+                <Card key={group.code} className="hover:border-gray-300 transition-colors">
                   <CardBody className="flex flex-row items-center gap-3">
                     <span className="text-3xl">{group.emoji}</span>
                     <div>

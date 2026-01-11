@@ -379,7 +379,22 @@ func (s *JSONStore) GetAllNodes() []Node {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var nodes []Node
+	// 预估容量以避免多次内存重分配
+	capacity := 0
+	for _, sub := range s.data.Subscriptions {
+		if sub.Enabled {
+			capacity += len(sub.Nodes)
+		}
+	}
+	for _, mn := range s.data.ManualNodes {
+		if mn.Enabled {
+			capacity++
+		}
+	}
+
+	// 预分配切片容量
+	nodes := make([]Node, 0, capacity)
+
 	// 添加订阅节点
 	for _, sub := range s.data.Subscriptions {
 		if sub.Enabled {
@@ -395,12 +410,72 @@ func (s *JSONStore) GetAllNodes() []Node {
 	return nodes
 }
 
+// GetAllNodesPtr 获取所有启用节点的指针切片（零拷贝优化）
+// 返回的指针直接引用内部数据，调用者不应修改节点内容
+func (s *JSONStore) GetAllNodesPtr() []*Node {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 预估容量
+	capacity := 0
+	for _, sub := range s.data.Subscriptions {
+		if sub.Enabled {
+			capacity += len(sub.Nodes)
+		}
+	}
+	for _, mn := range s.data.ManualNodes {
+		if mn.Enabled {
+			capacity++
+		}
+	}
+
+	// 预分配指针切片
+	nodes := make([]*Node, 0, capacity)
+
+	// 添加订阅节点指针
+	for i := range s.data.Subscriptions {
+		if s.data.Subscriptions[i].Enabled {
+			for j := range s.data.Subscriptions[i].Nodes {
+				nodes = append(nodes, &s.data.Subscriptions[i].Nodes[j])
+			}
+		}
+	}
+
+	// 添加手动节点指针
+	for i := range s.data.ManualNodes {
+		if s.data.ManualNodes[i].Enabled {
+			nodes = append(nodes, &s.data.ManualNodes[i].Node)
+		}
+	}
+
+	return nodes
+}
+
 // GetNodesByCountry 按国家获取节点
 func (s *JSONStore) GetNodesByCountry(countryCode string) []Node {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var nodes []Node
+	// 预估容量：先统计符合条件的节点数
+	capacity := 0
+	for _, sub := range s.data.Subscriptions {
+		if sub.Enabled {
+			for _, node := range sub.Nodes {
+				if node.Country == countryCode {
+					capacity++
+				}
+			}
+		}
+	}
+	for _, mn := range s.data.ManualNodes {
+		if mn.Enabled && mn.Node.Country == countryCode {
+			capacity++
+		}
+	}
+
+	// 预分配切片容量
+	nodes := make([]Node, 0, capacity)
+
 	// 订阅节点
 	for _, sub := range s.data.Subscriptions {
 		if sub.Enabled {

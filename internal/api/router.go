@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -23,6 +25,7 @@ import (
 	"github.com/xiaobei/singbox-manager/internal/parser"
 	"github.com/xiaobei/singbox-manager/internal/service"
 	"github.com/xiaobei/singbox-manager/internal/storage"
+	"github.com/xiaobei/singbox-manager/pkg/utils"
 	"github.com/xiaobei/singbox-manager/web"
 )
 
@@ -49,6 +52,13 @@ type Server struct {
 	sbmPath        string // sbm 可执行文件路径
 	port           int    // Web 服务端口
 	version        string // sbm 版本号
+
+	// 异步配置应用
+	configQueue    chan struct{}
+	configDone     chan struct{}
+	configPending  atomic.Bool // 标记是否有待处理的配置更新
+	lastApplyError error
+	lastApplyMu    sync.RWMutex
 }
 
 // NewServer 创建 API 服务器
@@ -72,10 +82,15 @@ func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, 
 		sbmPath:        sbmPath,
 		port:           port,
 		version:        version,
+		configQueue:    make(chan struct{}, 1), // 缓冲区为 1 实现去重
+		configDone:     make(chan struct{}),
 	}
 
 	// 设置调度器的更新回调
 	s.scheduler.SetUpdateCallback(s.autoApplyConfig)
+
+	// 启动异步配置应用 worker
+	go s.configApplyWorker()
 
 	s.setupRoutes()
 	return s
@@ -218,6 +233,14 @@ func (s *Server) setupRoutes() {
 // Run 运行服务器
 func (s *Server) Run(addr string) error {
 	return s.router.Run(addr)
+}
+
+// RunServer 返回 http.Server 用于优雅退出
+func (s *Server) RunServer(addr string) *http.Server {
+	return &http.Server{
+		Addr:    addr,
+		Handler: s.router,
+	}
 }
 
 // ==================== 订阅 API ====================
@@ -537,7 +560,8 @@ func (s *Server) validateRuleSet(c *gin.Context) {
 
 	// 发送 HEAD 请求检查文件是否存在
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout:   10 * time.Second,
+		Transport: utils.GetHTTPClient().Transport,
 	}
 
 	resp, err := client.Head(url)
@@ -688,7 +712,7 @@ func (s *Server) applyConfig(c *gin.Context) {
 
 func (s *Server) buildConfig() (string, error) {
 	settings := s.store.GetSettings()
-	nodes := s.store.GetAllNodes()
+	nodes := s.store.GetAllNodesPtr()
 	filters := s.store.GetFilters()
 	rules := s.store.GetRules()
 	ruleGroups := s.store.GetRuleGroups()
@@ -709,30 +733,94 @@ func (s *Server) resolvePath(path string) string {
 	return filepath.Join(s.store.GetDataDir(), path)
 }
 
-// autoApplyConfig 自动应用配置（如果 sing-box 正在运行）
+// autoApplyConfig 自动应用配置（异步，非阻塞）
+// 返回上次异步应用的错误（如果有），便于调用者感知历史失败
 func (s *Server) autoApplyConfig() error {
+	// 获取并清除上次的错误
+	s.lastApplyMu.Lock()
+	lastErr := s.lastApplyError
+	s.lastApplyError = nil
+	s.lastApplyMu.Unlock()
+
 	settings := s.store.GetSettings()
 	if !settings.AutoApply {
-		return nil
+		return lastErr
 	}
+
+	// 设置待处理标记，确保最新变更会被应用
+	s.configPending.Store(true)
+
+	// 非阻塞发送配置应用信号
+	select {
+	case s.configQueue <- struct{}{}:
+		// 成功发送信号，唤醒 worker
+	default:
+		// 队列已满，worker 正在处理中
+		// configPending 标记会确保 worker 处理完后再次检查
+	}
+
+	return lastErr
+}
+
+// configApplyWorker 后台配置应用 worker
+func (s *Server) configApplyWorker() {
+	for {
+		select {
+		case <-s.configQueue:
+			// 循环处理，直到没有待处理的更新
+			for s.configPending.Swap(false) {
+				s.doApplyConfig()
+			}
+		case <-s.configDone:
+			// 收到停止信号
+			return
+		}
+	}
+}
+
+// doApplyConfig 实际执行配置应用
+func (s *Server) doApplyConfig() {
+	settings := s.store.GetSettings()
 
 	// 生成配置
 	configJSON, err := s.buildConfig()
 	if err != nil {
-		return err
+		logger.Printf("生成配置失败: %v", err)
+		s.setLastApplyError(err)
+		return
 	}
 
 	// 保存配置文件
 	if err := s.saveConfigFile(s.resolvePath(settings.ConfigPath), configJSON); err != nil {
-		return err
+		logger.Printf("保存配置失败: %v", err)
+		s.setLastApplyError(err)
+		return
 	}
 
 	// 如果 sing-box 正在运行，则重启
 	if s.processManager.IsRunning() {
-		return s.processManager.Restart()
+		if err := s.processManager.Restart(); err != nil {
+			logger.Printf("重启 sing-box 失败: %v", err)
+			s.setLastApplyError(err)
+			return
+		}
 	}
 
-	return nil
+	// 成功时清除错误
+	s.setLastApplyError(nil)
+}
+
+// setLastApplyError 设置最后一次应用错误
+func (s *Server) setLastApplyError(err error) {
+	s.lastApplyMu.Lock()
+	s.lastApplyError = err
+	s.lastApplyMu.Unlock()
+}
+
+// Shutdown 优雅关闭服务器
+func (s *Server) Shutdown() {
+	close(s.configDone)
+	s.scheduler.Stop()
 }
 
 // ==================== 服务 API ====================
@@ -1159,7 +1247,40 @@ type ProcessStats struct {
 	MemoryMB   float64 `json:"memory_mb"`
 }
 
+// cachedSystemInfo 缓存的系统信息
+type cachedSystemInfo struct {
+	data      gin.H
+	timestamp time.Time
+	mu        sync.RWMutex
+}
+
+func (c *cachedSystemInfo) get() (gin.H, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// 缓存有效期 2 秒
+	if time.Since(c.timestamp) < 2*time.Second && c.data != nil {
+		return c.data, true
+	}
+	return nil, false
+}
+
+func (c *cachedSystemInfo) set(data gin.H) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data = data
+	c.timestamp = time.Now()
+}
+
+var systemInfoCache = &cachedSystemInfo{}
+
 func (s *Server) getSystemInfo(c *gin.Context) {
+	// 尝试从缓存获取
+	if cached, ok := systemInfoCache.get(); ok {
+		c.JSON(http.StatusOK, gin.H{"data": cached})
+		return
+	}
+
 	result := gin.H{}
 
 	// 获取 sbm 进程信息
@@ -1195,6 +1316,9 @@ func (s *Server) getSystemInfo(c *gin.Context) {
 			}
 		}
 	}
+
+	// 更新缓存
+	systemInfoCache.set(result)
 
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }

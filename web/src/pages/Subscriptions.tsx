@@ -653,12 +653,11 @@ export default function Subscriptions() {
                           {data.nodes.map(({ node, index }) => (
                             <div 
                               key={index} 
-                              className={`flex items-center gap-2 p-2 rounded text-sm cursor-pointer transition-colors ${
+                              className={`flex items-center gap-2 p-2 rounded text-sm transition-colors ${
                                 node.disabled 
                                   ? 'bg-gray-100 dark:bg-gray-900 opacity-50' 
-                                  : 'bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700'
+                                  : 'bg-gray-50 dark:bg-gray-800'
                               }`}
-                              onClick={() => handleToggleNode(index)}
                             >
                               <Switch 
                                 size="sm" 

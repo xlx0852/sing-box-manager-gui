@@ -320,6 +320,7 @@ export default function Subscriptions() {
                           value={(sub.traffic.used / sub.traffic.total) * 100}
                           color={sub.traffic.used / sub.traffic.total > 0.8 ? 'danger' : 'primary'}
                           className="flex-1"
+                          aria-label="流量使用进度"
                         />
                         <span className="text-xs text-gray-500 w-12 text-right">
                           {((sub.traffic.used / sub.traffic.total) * 100).toFixed(1)}%

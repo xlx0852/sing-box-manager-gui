@@ -576,6 +576,7 @@ export default function Settings() {
                 <Progress
                   value={downloadProgress.progress}
                   color={downloadProgress.status === 'error' ? 'danger' : downloadProgress.status === 'completed' ? 'success' : 'primary'}
+                  aria-label="下载进度"
                 />
                 <p className="text-center text-sm">{downloadProgress.message}</p>
               </div>

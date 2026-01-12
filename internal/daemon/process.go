@@ -3,16 +3,17 @@ package daemon
 import (
 	"bufio"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/process"
 	"github.com/xiaobei/singbox-manager/internal/logger"
 )
 
@@ -111,31 +112,33 @@ func (pm *ProcessManager) findSingboxProcess() int {
 	return pid
 }
 
-// isSingboxProcess 检查进程是否是 sing-box
-func (pm *ProcessManager) isSingboxProcess(proc *process.Process) bool {
-	// 方法1：检查进程名称
-	name, _ := proc.Name()
-	if name == "sing-box" {
-		return true
-	}
-
-	// 方法2：检查可执行文件路径（macOS 上进程名可能被截断）
-	exe, _ := proc.Exe()
-	if strings.HasSuffix(exe, "/sing-box") || strings.HasSuffix(exe, "\\sing-box") {
-		return true
-	}
-
-	return false
-}
-
 // isValidSingboxProcess 验证 PID 是否是有效的 sing-box 进程
 func (pm *ProcessManager) isValidSingboxProcess(pid int) bool {
-	proc, err := process.NewProcess(int32(pid))
-	if err != nil {
+	if pid <= 0 {
 		return false
 	}
 
-	return pm.isSingboxProcess(proc)
+	// Linux: 读取 /proc/{pid}/comm 获取进程名
+	if runtime.GOOS == "linux" {
+		// 方法1：检查进程名称
+		commPath := fmt.Sprintf("/proc/%d/comm", pid)
+		if data, err := os.ReadFile(commPath); err == nil {
+			name := strings.TrimSpace(string(data))
+			if name == "sing-box" {
+				return true
+			}
+		}
+
+		// 方法2：检查可执行文件路径
+		exePath := fmt.Sprintf("/proc/%d/exe", pid)
+		if exe, err := os.Readlink(exePath); err == nil {
+			if strings.HasSuffix(exe, "/sing-box") {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // isProcessAlive 使用 kill -0 检查进程是否存活（更可靠）
@@ -218,7 +221,7 @@ func (pm *ProcessManager) monitorProcess(pid int) {
 			continue
 		}
 
-		// kill -0 失败，再用 gopsutil 检查
+		// kill -0 失败，再用 /proc 检查进程是否是 sing-box
 		if pm.isValidSingboxProcess(pid) {
 			failCount = 0
 			continue
@@ -434,7 +437,7 @@ func (pm *ProcessManager) IsRunning() bool {
 		return true
 	}
 
-	// 2.4 兜底：用 pgrep 快速查找 (替代 gopsutil 全量扫描)
+	// 2.4 兜底：用 pgrep 快速查找
 	if pgrepPid := pm.findSingboxByPgrep(); pgrepPid > 0 {
 		pm.recoverState(pgrepPid)
 		return true
@@ -541,4 +544,174 @@ func (pm *ProcessManager) Version() (string, error) {
 		return "", fmt.Errorf("获取版本失败: %w", err)
 	}
 	return string(output), nil
+}
+
+// HealthChecker 健康检查器
+type HealthChecker struct {
+	pm              *ProcessManager
+	clashAPIPort    int
+	clashAPISecret  string
+	interval        time.Duration
+	autoRestart     bool
+	enabled         bool
+	stopCh          chan struct{}
+	mu              sync.Mutex
+	failCount       int
+	maxFails        int
+	lastCheckTime   time.Time
+	lastCheckResult bool
+}
+
+// NewHealthChecker 创建健康检查器
+func NewHealthChecker(pm *ProcessManager) *HealthChecker {
+	return &HealthChecker{
+		pm:       pm,
+		interval: 30 * time.Second,
+		maxFails: 3,
+		stopCh:   make(chan struct{}),
+	}
+}
+
+// Configure 配置健康检查器
+func (hc *HealthChecker) Configure(enabled bool, interval int, autoRestart bool, clashAPIPort int, clashAPISecret string) {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+
+	hc.enabled = enabled
+	if interval > 0 {
+		hc.interval = time.Duration(interval) * time.Second
+	}
+	hc.autoRestart = autoRestart
+	hc.clashAPIPort = clashAPIPort
+	hc.clashAPISecret = clashAPISecret
+}
+
+// Start 启动健康检查
+func (hc *HealthChecker) Start() {
+	hc.mu.Lock()
+	if !hc.enabled {
+		hc.mu.Unlock()
+		return
+	}
+	hc.stopCh = make(chan struct{})
+	hc.mu.Unlock()
+
+	go hc.run()
+}
+
+// Stop 停止健康检查
+func (hc *HealthChecker) Stop() {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+
+	if hc.stopCh != nil {
+		close(hc.stopCh)
+		hc.stopCh = nil
+	}
+}
+
+// run 健康检查循环
+func (hc *HealthChecker) run() {
+	ticker := time.NewTicker(hc.interval)
+	defer ticker.Stop()
+
+	logger.Printf("健康检查已启动，间隔: %v", hc.interval)
+
+	for {
+		select {
+		case <-hc.stopCh:
+			logger.Printf("健康检查已停止")
+			return
+		case <-ticker.C:
+			hc.check()
+		}
+	}
+}
+
+// check 执行健康检查
+func (hc *HealthChecker) check() {
+	hc.mu.Lock()
+	clashAPIPort := hc.clashAPIPort
+	clashAPISecret := hc.clashAPISecret
+	autoRestart := hc.autoRestart
+	hc.mu.Unlock()
+
+	// 如果进程未运行，跳过检查
+	if !hc.pm.IsRunning() {
+		return
+	}
+
+	// 请求 Clash API
+	healthy := hc.checkClashAPI(clashAPIPort, clashAPISecret)
+
+	hc.mu.Lock()
+	hc.lastCheckTime = time.Now()
+	hc.lastCheckResult = healthy
+
+	if healthy {
+		hc.failCount = 0
+		hc.mu.Unlock()
+		return
+	}
+
+	hc.failCount++
+	failCount := hc.failCount
+	hc.mu.Unlock()
+
+	logger.Printf("健康检查失败 (%d/%d)", failCount, hc.maxFails)
+
+	// 连续失败达到阈值，尝试重启
+	if failCount >= hc.maxFails && autoRestart {
+		logger.Printf("健康检查连续失败 %d 次，正在重启 sing-box...", failCount)
+		if err := hc.pm.Restart(); err != nil {
+			logger.Printf("自动重启失败: %v", err)
+		} else {
+			logger.Printf("自动重启成功")
+			hc.mu.Lock()
+			hc.failCount = 0
+			hc.mu.Unlock()
+		}
+	}
+}
+
+// checkClashAPI 检查 Clash API 是否响应
+func (hc *HealthChecker) checkClashAPI(port int, secret string) bool {
+	if port <= 0 {
+		return true // 没配置端口，跳过检查
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/version", port)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false
+	}
+
+	if secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == 200
+}
+
+// GetStatus 获取健康检查状态
+func (hc *HealthChecker) GetStatus() map[string]interface{} {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+
+	return map[string]interface{}{
+		"enabled":           hc.enabled,
+		"interval":          int(hc.interval.Seconds()),
+		"auto_restart":      hc.autoRestart,
+		"fail_count":        hc.failCount,
+		"last_check_time":   hc.lastCheckTime,
+		"last_check_result": hc.lastCheckResult,
+	}
 }

@@ -46,6 +46,53 @@ const countryOptions = [
   { code: 'CA', name: '加拿大', emoji: '🇨🇦' },
   { code: 'RU', name: '俄罗斯', emoji: '🇷🇺' },
   { code: 'IN', name: '印度', emoji: '🇮🇳' },
+  { code: 'TR', name: '土耳其', emoji: '🇹🇷' },
+  { code: 'BR', name: '巴西', emoji: '🇧🇷' },
+  { code: 'AR', name: '阿根廷', emoji: '🇦🇷' },
+  { code: 'PH', name: '菲律宾', emoji: '🇵🇭' },
+  { code: 'TH', name: '泰国', emoji: '🇹🇭' },
+  { code: 'VN', name: '越南', emoji: '🇻🇳' },
+  { code: 'MY', name: '马来西亚', emoji: '🇲🇾' },
+  { code: 'ID', name: '印度尼西亚', emoji: '🇮🇩' },
+  { code: 'IT', name: '意大利', emoji: '🇮🇹' },
+  { code: 'ES', name: '西班牙', emoji: '🇪🇸' },
+  { code: 'PL', name: '波兰', emoji: '🇵🇱' },
+  { code: 'UA', name: '乌克兰', emoji: '🇺🇦' },
+  { code: 'CH', name: '瑞士', emoji: '🇨🇭' },
+  { code: 'SE', name: '瑞典', emoji: '🇸🇪' },
+  { code: 'NO', name: '挪威', emoji: '🇳🇴' },
+  { code: 'FI', name: '芬兰', emoji: '🇫🇮' },
+  { code: 'DK', name: '丹麦', emoji: '🇩🇰' },
+  { code: 'IE', name: '爱尔兰', emoji: '🇮🇪' },
+  { code: 'ZA', name: '南非', emoji: '🇿🇦' },
+  { code: 'AE', name: '阿联酋', emoji: '🇦🇪' },
+  { code: 'IL', name: '以色列', emoji: '🇮🇱' },
+  { code: 'MX', name: '墨西哥', emoji: '🇲🇽' },
+  { code: 'CL', name: '智利', emoji: '🇨🇱' },
+  { code: 'CO', name: '哥伦比亚', emoji: '🇨🇴' },
+  { code: 'NZ', name: '新西兰', emoji: '🇳🇿' },
+  { code: 'AT', name: '奥地利', emoji: '🇦🇹' },
+  { code: 'BE', name: '比利时', emoji: '🇧🇪' },
+  { code: 'CZ', name: '捷克', emoji: '🇨🇿' },
+  { code: 'HU', name: '匈牙利', emoji: '🇭🇺' },
+  { code: 'PT', name: '葡萄牙', emoji: '🇵🇹' },
+  { code: 'GR', name: '希腊', emoji: '🇬🇷' },
+  { code: 'RO', name: '罗马尼亚', emoji: '🇷🇴' },
+  { code: 'BG', name: '保加利亚', emoji: '🇧🇬' },
+  { code: 'SK', name: '斯洛伐克', emoji: '🇸🇰' },
+  { code: 'LT', name: '立陶宛', emoji: '🇱🇹' },
+  { code: 'LV', name: '拉脱维亚', emoji: '🇱🇻' },
+  { code: 'EE', name: '爱沙尼亚', emoji: '🇪🇪' },
+  { code: 'HR', name: '克罗地亚', emoji: '🇭🇷' },
+  { code: 'SI', name: '斯洛文尼亚', emoji: '🇸🇮' },
+  { code: 'RS', name: '塞尔维亚', emoji: '🇷🇸' },
+  { code: 'KZ', name: '哈萨克斯坦', emoji: '🇰🇿' },
+  { code: 'PK', name: '巴基斯坦', emoji: '🇵🇰' },
+  { code: 'BD', name: '孟加拉国', emoji: '🇧🇩' },
+  { code: 'EG', name: '埃及', emoji: '🇪🇬' },
+  { code: 'NG', name: '尼日利亚', emoji: '🇳🇬' },
+  { code: 'KE', name: '肯尼亚', emoji: '🇰🇪' },
+  { code: 'OTHER', name: '其他', emoji: '🌐' },
 ];
 
 const defaultNode: Node = {
@@ -573,12 +620,36 @@ export default function Subscriptions() {
           <ModalBody>
             <Input label="名称" placeholder="如：日本高速" value={filterForm.name} onChange={(e) => setFilterForm({ ...filterForm, name: e.target.value })} isRequired />
             <div className="grid grid-cols-2 gap-3">
-              <Select label="包含国家" selectionMode="multiple" selectedKeys={new Set(filterForm.include_countries)}
-                onSelectionChange={(keys) => setFilterForm({ ...filterForm, include_countries: Array.from(keys) as string[] })}>
+              <Select 
+                label="包含国家" 
+                selectionMode="multiple" 
+                selectedKeys={new Set(filterForm.include_countries)}
+                onSelectionChange={(keys) => setFilterForm({ ...filterForm, include_countries: Array.from(keys) as string[] })}
+                renderValue={(items) => (
+                  <div className="flex flex-wrap gap-1">
+                    {items.map(item => {
+                      const c = countryOptions.find(o => o.code === item.key);
+                      return <span key={item.key}>{c?.emoji || item.key}</span>;
+                    })}
+                  </div>
+                )}
+              >
                 {countryOptions.map((o) => <SelectItem key={o.code}>{o.emoji} {o.name}</SelectItem>)}
               </Select>
-              <Select label="排除国家" selectionMode="multiple" selectedKeys={new Set(filterForm.exclude_countries)}
-                onSelectionChange={(keys) => setFilterForm({ ...filterForm, exclude_countries: Array.from(keys) as string[] })}>
+              <Select 
+                label="排除国家" 
+                selectionMode="multiple" 
+                selectedKeys={new Set(filterForm.exclude_countries)}
+                onSelectionChange={(keys) => setFilterForm({ ...filterForm, exclude_countries: Array.from(keys) as string[] })}
+                renderValue={(items) => (
+                  <div className="flex flex-wrap gap-1">
+                    {items.map(item => {
+                      const c = countryOptions.find(o => o.code === item.key);
+                      return <span key={item.key}>{c?.emoji || item.key}</span>;
+                    })}
+                  </div>
+                )}
+              >
                 {countryOptions.map((o) => <SelectItem key={o.code}>{o.emoji} {o.name}</SelectItem>)}
               </Select>
             </div>

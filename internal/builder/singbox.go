@@ -860,13 +860,8 @@ func (b *ConfigBuilder) buildRoute() *RouteConfig {
 
 // buildExperimental 构建实验性配置
 func (b *ConfigBuilder) buildExperimental() *ExperimentalConfig {
-	// 根据局域网访问设置决定监听地址
-	listenAddr := "127.0.0.1"
-	if b.settings.AllowLAN {
-		listenAddr = "0.0.0.0"
-	}
-
-	// 只有开启局域网访问时才设置 secret
+	// Clash API 总是绑定到 0.0.0.0，因为 sbm 可能从远程访问（软路由场景）
+	// 安全性由 secret 保证
 	secret := ""
 	if b.settings.AllowLAN {
 		secret = b.settings.ClashAPISecret
@@ -874,7 +869,7 @@ func (b *ConfigBuilder) buildExperimental() *ExperimentalConfig {
 
 	return &ExperimentalConfig{
 		ClashAPI: &ClashAPIConfig{
-			ExternalController: fmt.Sprintf("%s:%d", listenAddr, b.settings.ClashAPIPort),
+			ExternalController: fmt.Sprintf("0.0.0.0:%d", b.settings.ClashAPIPort),
 			Secret:             secret,
 			DefaultMode:        "rule",
 			// 不需要 external_ui，sbm 已接管 UI

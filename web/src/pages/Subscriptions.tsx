@@ -573,11 +573,11 @@ export default function Subscriptions() {
           <ModalBody>
             <Input label="名称" placeholder="如：日本高速" value={filterForm.name} onChange={(e) => setFilterForm({ ...filterForm, name: e.target.value })} isRequired />
             <div className="grid grid-cols-2 gap-3">
-              <Select label="包含国家" selectionMode="multiple" selectedKeys={filterForm.include_countries}
+              <Select label="包含国家" selectionMode="multiple" selectedKeys={new Set(filterForm.include_countries)}
                 onSelectionChange={(keys) => setFilterForm({ ...filterForm, include_countries: Array.from(keys) as string[] })}>
                 {countryOptions.map((o) => <SelectItem key={o.code}>{o.emoji} {o.name}</SelectItem>)}
               </Select>
-              <Select label="排除国家" selectionMode="multiple" selectedKeys={filterForm.exclude_countries}
+              <Select label="排除国家" selectionMode="multiple" selectedKeys={new Set(filterForm.exclude_countries)}
                 onSelectionChange={(keys) => setFilterForm({ ...filterForm, exclude_countries: Array.from(keys) as string[] })}>
                 {countryOptions.map((o) => <SelectItem key={o.code}>{o.emoji} {o.name}</SelectItem>)}
               </Select>

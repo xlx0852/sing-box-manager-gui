@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Card, CardBody, CardHeader, Button, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Tooltip } from '@nextui-org/react';
-import { Play, Square, RefreshCw, Cpu, HardDrive, Wifi, Info, Activity } from 'lucide-react';
+import { Play, Square, RefreshCw, Cpu, HardDrive, Wifi, Info, Activity, ChevronDown } from 'lucide-react';
 import { useStore } from '../store';
 import { serviceApi, configApi } from '../api';
 import { toast } from '../components/Toast';
+import NetworkTopology from '../components/NetworkTopology';
 
 export default function Dashboard() {
   // 使用选择器优化渲染性能
@@ -13,6 +14,7 @@ export default function Dashboard() {
   const fetchServiceStatus = useStore(state => state.fetchServiceStatus);
   const fetchSubscriptions = useStore(state => state.fetchSubscriptions);
   const fetchSystemInfo = useStore(state => state.fetchSystemInfo);
+  const fetchSettings = useStore(state => state.fetchSettings);
 
   // 错误模态框状态
   const [errorModal, setErrorModal] = useState<{
@@ -24,6 +26,9 @@ export default function Dashboard() {
     title: '',
     message: ''
   });
+
+  // 网络拓扑展开状态
+  const [showTopology, setShowTopology] = useState(true);
 
   // 显示错误的辅助函数
   const showError = (title: string, error: any) => {
@@ -40,6 +45,7 @@ export default function Dashboard() {
     fetchServiceStatus();
     fetchSubscriptions();
     fetchSystemInfo();
+    fetchSettings();
 
     // 轮询函数 - 仅在页面可见时执行
     const poll = () => {
@@ -65,7 +71,7 @@ export default function Dashboard() {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [fetchServiceStatus, fetchSubscriptions, fetchSystemInfo]);
+  }, [fetchServiceStatus, fetchSubscriptions, fetchSystemInfo, fetchSettings]);
 
   const handleStart = async () => {
     try {
@@ -274,6 +280,28 @@ export default function Dashboard() {
           </CardBody>
         </Card>
       </div>
+
+      {/* 网络拓扑 */}
+      {serviceStatus?.running && (
+        <Card>
+          <CardHeader
+            className="flex justify-between items-center cursor-pointer"
+            onClick={() => setShowTopology(!showTopology)}
+          >
+            <h2 className="text-lg font-semibold">网络拓扑</h2>
+            <Button isIconOnly size="sm" variant="light">
+              <ChevronDown
+                className={`w-5 h-5 transition-transform ${showTopology ? 'rotate-180' : ''}`}
+              />
+            </Button>
+          </CardHeader>
+          {showTopology && (
+            <CardBody>
+              <NetworkTopology />
+            </CardBody>
+          )}
+        </Card>
+      )}
 
       {/* 订阅列表预览 */}
       <Card>

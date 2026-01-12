@@ -181,6 +181,20 @@ func (s *JSONStore) UpdateSubscription(sub Subscription) error {
 	return fmt.Errorf("订阅不存在: %s", sub.ID)
 }
 
+// SaveSubscriptionNodes 更新订阅的节点列表
+func (s *JSONStore) SaveSubscriptionNodes(id string, nodes []Node) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.data.Subscriptions {
+		if s.data.Subscriptions[i].ID == id {
+			s.data.Subscriptions[i].Nodes = nodes
+			return s.saveInternal()
+		}
+	}
+	return fmt.Errorf("订阅不存在: %s", id)
+}
+
 // DeleteSubscription 删除订阅
 func (s *JSONStore) DeleteSubscription(id string) error {
 	s.mu.Lock()

@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"os"
@@ -17,7 +18,6 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/shirou/gopsutil/v3/process"
 	"github.com/xiaobei/singbox-manager/internal/builder"
 	"github.com/xiaobei/singbox-manager/internal/daemon"
 	"github.com/xiaobei/singbox-manager/internal/kernel"
@@ -25,6 +25,7 @@ import (
 	"github.com/xiaobei/singbox-manager/internal/parser"
 	"github.com/xiaobei/singbox-manager/internal/service"
 	"github.com/xiaobei/singbox-manager/internal/storage"
+	"github.com/xiaobei/singbox-manager/pkg/procmon"
 	"github.com/xiaobei/singbox-manager/pkg/utils"
 	"github.com/xiaobei/singbox-manager/web"
 )
@@ -48,6 +49,7 @@ type Server struct {
 	systemdManager *daemon.SystemdManager
 	kernelManager  *kernel.Manager
 	scheduler      *service.Scheduler
+	healthChecker  *daemon.HealthChecker
 	router         *gin.Engine
 	sbmPath        string // sbm 可执行文件路径
 	port           int    // Web 服务端口
@@ -70,6 +72,9 @@ func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, 
 	// 创建内核管理器
 	kernelManager := kernel.NewManager(store.GetDataDir(), store.GetSettings)
 
+	// 创建健康检查器
+	healthChecker := daemon.NewHealthChecker(processManager)
+
 	s := &Server{
 		store:          store,
 		subService:     subService,
@@ -78,6 +83,7 @@ func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, 
 		systemdManager: systemdManager,
 		kernelManager:  kernelManager,
 		scheduler:      service.NewScheduler(store, subService),
+		healthChecker:  healthChecker,
 		router:         gin.Default(),
 		sbmPath:        sbmPath,
 		port:           port,
@@ -91,6 +97,17 @@ func NewServer(store *storage.JSONStore, processManager *daemon.ProcessManager, 
 
 	// 启动异步配置应用 worker
 	go s.configApplyWorker()
+
+	// 配置并启动健康检查器
+	settings := store.GetSettings()
+	healthChecker.Configure(
+		settings.HealthCheckEnabled,
+		settings.HealthCheckInterval,
+		settings.AutoRestart,
+		settings.ClashAPIPort,
+		settings.ClashAPISecret,
+	)
+	healthChecker.Start()
 
 	s.setupRoutes()
 	return s
@@ -128,6 +145,7 @@ func (s *Server) setupRoutes() {
 		api.DELETE("/subscriptions/:id", s.deleteSubscription)
 		api.POST("/subscriptions/:id/refresh", s.refreshSubscription)
 		api.POST("/subscriptions/refresh-all", s.refreshAllSubscriptions)
+		api.POST("/subscriptions/:id/nodes/:nodeIndex/toggle", s.toggleNodeDisabled)
 
 		// 过滤器管理
 		api.GET("/filters", s.getFilters)
@@ -347,6 +365,43 @@ func (s *Server) refreshAllSubscriptions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "刷新成功"})
+}
+
+// toggleNodeDisabled 切换节点禁用状态
+func (s *Server) toggleNodeDisabled(c *gin.Context) {
+	subID := c.Param("id")
+	nodeIndexStr := c.Param("nodeIndex")
+
+	nodeIndex, err := strconv.Atoi(nodeIndexStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的节点索引"})
+		return
+	}
+
+	sub := s.store.GetSubscription(subID)
+	if sub == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "订阅不存在"})
+		return
+	}
+
+	if nodeIndex < 0 || nodeIndex >= len(sub.Nodes) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "节点索引越界"})
+		return
+	}
+
+	// 切换禁用状态
+	sub.Nodes[nodeIndex].Disabled = !sub.Nodes[nodeIndex].Disabled
+
+	// 保存更新后的节点列表
+	if err := s.store.SaveSubscriptionNodes(subID, sub.Nodes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "已更新",
+		"disabled": sub.Nodes[nodeIndex].Disabled,
+	})
 }
 
 // ==================== 过滤器 API ====================
@@ -630,6 +685,17 @@ func (s *Server) updateSettings(c *gin.Context) {
 	// 重启调度器（可能更新了定时间隔）
 	s.scheduler.Restart()
 
+	// 更新健康检查器配置
+	s.healthChecker.Stop()
+	s.healthChecker.Configure(
+		settings.HealthCheckEnabled,
+		settings.HealthCheckInterval,
+		settings.AutoRestart,
+		settings.ClashAPIPort,
+		settings.ClashAPISecret,
+	)
+	s.healthChecker.Start()
+
 	// 自动应用配置
 	if err := s.autoApplyConfig(); err != nil {
 		c.JSON(http.StatusOK, gin.H{"data": settings, "warning": "更新成功，但自动应用配置失败: " + err.Error()})
@@ -686,9 +752,13 @@ func (s *Server) applyConfig(c *gin.Context) {
 		return
 	}
 
-	// 保存配置文件
+	// 读取旧配置（用于判断是否需要硬重启）
 	settings := s.store.GetSettings()
-	if err := s.saveConfigFile(s.resolvePath(settings.ConfigPath), configJSON); err != nil {
+	configPath := s.resolvePath(settings.ConfigPath)
+	oldConfig, _ := os.ReadFile(configPath)
+
+	// 保存新配置文件
+	if err := s.saveConfigFile(configPath, configJSON); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -701,13 +771,63 @@ func (s *Server) applyConfig(c *gin.Context) {
 
 	// 重启服务
 	if s.processManager.IsRunning() {
-		if err := s.processManager.Restart(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+		// 判断是否需要硬重启
+		needHardRestart := s.needHardRestart(oldConfig, []byte(configJSON))
+		
+		if needHardRestart {
+			logger.Printf("配置变更需要硬重启")
+			if err := s.processManager.Restart(); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "配置已应用（硬重启）"})
+		} else {
+			logger.Printf("配置变更使用软重载")
+			if err := s.processManager.Reload(); err != nil {
+				// 软重载失败，尝试硬重启
+				logger.Printf("软重载失败，尝试硬重启: %v", err)
+				if err := s.processManager.Restart(); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"message": "配置已应用（软重载失败，已硬重启）"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "配置已应用（软重载）"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "配置已保存"})
+}
+
+// needHardRestart 判断配置变更是否需要硬重启
+// 需要硬重启的情况：inbounds、experimental、log 配置变化
+func (s *Server) needHardRestart(oldConfig, newConfig []byte) bool {
+	if len(oldConfig) == 0 {
+		return true // 没有旧配置，需要硬重启
+	}
+
+	var oldCfg, newCfg map[string]interface{}
+	if err := json.Unmarshal(oldConfig, &oldCfg); err != nil {
+		return true
+	}
+	if err := json.Unmarshal(newConfig, &newCfg); err != nil {
+		return true
+	}
+
+	// 检查需要硬重启的字段
+	hardRestartFields := []string{"inbounds", "experimental", "log"}
+	for _, field := range hardRestartFields {
+		oldVal, _ := json.Marshal(oldCfg[field])
+		newVal, _ := json.Marshal(newCfg[field])
+		if string(oldVal) != string(newVal) {
+			logger.Printf("字段 %s 变更，需要硬重启", field)
+			return true
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "配置已应用"})
+	return false
 }
 
 func (s *Server) buildConfig() (string, error) {
@@ -1284,35 +1404,23 @@ func (s *Server) getSystemInfo(c *gin.Context) {
 	result := gin.H{}
 
 	// 获取 sbm 进程信息
-	sbmPid := int32(os.Getpid())
-	if sbmProc, err := process.NewProcess(sbmPid); err == nil {
-		cpuPercent, _ := sbmProc.CPUPercent()
-		var memoryMB float64
-		if memInfo, err := sbmProc.MemoryInfo(); err == nil && memInfo != nil {
-			memoryMB = float64(memInfo.RSS) / 1024 / 1024
-		}
-
+	sbmPid := os.Getpid()
+	if stats, err := procmon.GetProcessStats(sbmPid); err == nil {
 		result["sbm"] = ProcessStats{
-			PID:        int(sbmPid),
-			CPUPercent: cpuPercent,
-			MemoryMB:   memoryMB,
+			PID:        stats.PID,
+			CPUPercent: stats.CPUPercent,
+			MemoryMB:   stats.MemoryMB,
 		}
 	}
 
 	// 获取 sing-box 进程信息
 	if s.processManager.IsRunning() {
-		singboxPid := int32(s.processManager.GetPID())
-		if singboxProc, err := process.NewProcess(singboxPid); err == nil {
-			cpuPercent, _ := singboxProc.CPUPercent()
-			var memoryMB float64
-			if memInfo, err := singboxProc.MemoryInfo(); err == nil && memInfo != nil {
-				memoryMB = float64(memInfo.RSS) / 1024 / 1024
-			}
-
+		singboxPid := s.processManager.GetPID()
+		if stats, err := procmon.GetProcessStats(singboxPid); err == nil {
 			result["singbox"] = ProcessStats{
-				PID:        int(singboxPid),
-				CPUPercent: cpuPercent,
-				MemoryMB:   memoryMB,
+				PID:        stats.PID,
+				CPUPercent: stats.CPUPercent,
+				MemoryMB:   stats.MemoryMB,
 			}
 		}
 	}

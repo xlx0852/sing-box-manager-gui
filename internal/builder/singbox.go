@@ -342,11 +342,9 @@ func (b *ConfigBuilder) buildDNS() *DNSConfig {
 }
 
 // buildNTP 构建 NTP 配置
+// 不启用 NTP，系统自带时间同步服务
 func (b *ConfigBuilder) buildNTP() *NTPConfig {
-	return &NTPConfig{
-		Enabled: true,
-		Server:  "time.apple.com",
-	}
+	return nil
 }
 
 // buildInbounds 构建入站配置
@@ -397,8 +395,11 @@ func (b *ConfigBuilder) buildOutbounds() []Outbound {
 	nodeTagSet := make(map[string]bool)
 	countryNodes := make(map[string][]string) // 国家代码 -> 节点标签列表
 
-	// 添加所有节点
+	// 添加所有节点（跳过禁用的）
 	for _, node := range b.nodes {
+		if node.Disabled {
+			continue // 跳过禁用的节点
+		}
 		outbound := b.nodeToOutbound(node)
 		outbounds = append(outbounds, outbound)
 		tag := node.Tag
@@ -425,9 +426,12 @@ func (b *ConfigBuilder) buildOutbounds() []Outbound {
 			continue
 		}
 
-		// 根据过滤器筛选节点
+		// 根据过滤器筛选节点（跳过禁用的）
 		var filteredTags []string
 		for _, node := range b.nodes {
+			if node.Disabled {
+				continue
+			}
 			if b.matchFilter(node, filter) {
 				filteredTags = append(filteredTags, node.Tag)
 			}
@@ -860,16 +864,15 @@ func (b *ConfigBuilder) buildExperimental() *ExperimentalConfig {
 
 	return &ExperimentalConfig{
 		ClashAPI: &ClashAPIConfig{
-			ExternalController:    fmt.Sprintf("%s:%d", listenAddr, b.settings.ClashAPIPort),
-			ExternalUI:            b.settings.ClashUIPath,
-			ExternalUIDownloadURL: "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip",
-			Secret:                secret,
-			DefaultMode:           "rule",
+			ExternalController: fmt.Sprintf("%s:%d", listenAddr, b.settings.ClashAPIPort),
+			Secret:             secret,
+			DefaultMode:        "rule",
+			// 不需要 external_ui，sbm 已接管 UI
 		},
 		CacheFile: &CacheFileConfig{
 			Enabled:     true,
 			Path:        "cache.db",
-			StoreFakeIP: true, // 持久化 FakeIP 映射，避免重启后地址变化
+			StoreFakeIP: true,
 		},
 	}
 }

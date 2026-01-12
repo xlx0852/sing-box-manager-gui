@@ -49,6 +49,7 @@ export function useClashConnections(): UseClashConnectionsReturn {
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttempts = useRef(0);
 
   const connect = useCallback(() => {
     if (!settings) return;
@@ -77,7 +78,7 @@ export function useClashConnections(): UseClashConnectionsReturn {
       ws.onopen = () => {
         setIsConnected(true);
         setError(null);
-        console.log('Clash API WebSocket connected');
+        reconnectAttempts.current = 0; // 重置重连计数
       };
 
       ws.onmessage = (event) => {
@@ -100,10 +101,10 @@ export function useClashConnections(): UseClashConnectionsReturn {
         setIsConnected(false);
         wsRef.current = null;
         
-        // 5秒后尝试重连
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connect();
-        }, 5000);
+        // 指数退避重连：1s, 2s, 4s, 最大 10s
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000);
+        reconnectAttempts.current++;
+        reconnectTimeoutRef.current = setTimeout(connect, delay);
       };
     } catch (e) {
       setError('无法建立 WebSocket 连接');

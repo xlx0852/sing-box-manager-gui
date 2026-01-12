@@ -628,13 +628,14 @@ export default function Subscriptions() {
                 renderValue={(items) => (
                   <div className="flex flex-wrap gap-1">
                     {items.map(item => {
-                      const c = countryOptions.find(o => o.code === item.key);
-                      return <span key={item.key}>{c?.emoji || item.key}</span>;
+                      const code = String(item.key);
+                      const c = countryOptions.find(o => o.code === code);
+                      return <span key={code}>{c?.emoji || code}</span>;
                     })}
                   </div>
                 )}
               >
-                {countryOptions.map((o) => <SelectItem key={o.code}>{o.emoji} {o.name}</SelectItem>)}
+                {countryOptions.map((o) => <SelectItem key={o.code} textValue={`${o.emoji} ${o.name}`}>{o.emoji} {o.name}</SelectItem>)}
               </Select>
               <Select 
                 label="排除国家" 
@@ -644,13 +645,14 @@ export default function Subscriptions() {
                 renderValue={(items) => (
                   <div className="flex flex-wrap gap-1">
                     {items.map(item => {
-                      const c = countryOptions.find(o => o.code === item.key);
-                      return <span key={item.key}>{c?.emoji || item.key}</span>;
+                      const code = String(item.key);
+                      const c = countryOptions.find(o => o.code === code);
+                      return <span key={code}>{c?.emoji || code}</span>;
                     })}
                   </div>
                 )}
               >
-                {countryOptions.map((o) => <SelectItem key={o.code}>{o.emoji} {o.name}</SelectItem>)}
+                {countryOptions.map((o) => <SelectItem key={o.code} textValue={`${o.emoji} ${o.name}`}>{o.emoji} {o.name}</SelectItem>)}
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">

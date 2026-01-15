@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Card, CardBody, Button, Input, Chip,
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Pagination
@@ -36,6 +36,14 @@ const getConnectionChains = (conn: Connection) => conn.chains.slice().reverse().
 export default function Connections() {
   const { connections, downloadTotal, uploadTotal, isConnected, reconnect } = useClashConnections();
   const settings = useStore(state => state.settings);
+  const fetchSettings = useStore(state => state.fetchSettings);
+
+  // 确保 settings 已加载
+  useEffect(() => {
+    if (!settings) {
+      fetchSettings();
+    }
+  }, [settings, fetchSettings]);
 
   const [activeTab, setActiveTab] = useState<'active' | 'closed'>('active');
   const [searchQuery, setSearchQuery] = useState('');

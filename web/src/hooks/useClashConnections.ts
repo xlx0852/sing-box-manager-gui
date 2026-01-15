@@ -131,7 +131,8 @@ export function useClashConnections(): UseClashConnectionsReturn {
   useEffect(() => {
     mountedRef.current = true;
     
-    if (settings) {
+    // 当 settings 加载完成后自动连接
+    if (settings?.clash_api_port) {
       connect();
     }
 
@@ -146,7 +147,7 @@ export function useClashConnections(): UseClashConnectionsReturn {
         wsRef.current = null;
       }
     };
-  }, [settings?.clash_api_port, settings?.clash_api_secret]);
+  }, [settings?.clash_api_port, settings?.clash_api_secret, connect]);
 
   return {
     connections,
